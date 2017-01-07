@@ -1,4 +1,5 @@
 #lang racket
+;eval and apply
 (define (eval exp env)
   (cond ((self-evaluating? exp) exp)
         ((variable? exp) (lookup-variable-value exp env))
@@ -20,7 +21,6 @@
         (else
          (error "Unknown expression type: EVAL" exp))))
 
-
 (define (apply procedure arguments)
   (cond ((primitive-procedure? procedure)
          (apply-primitive-procedure procedure argements))
@@ -34,101 +34,30 @@
         (else
          (error "Unknown procedure type: APPLY" procedure))))
 
-(define (list-of-values exps env)
-  (if (no-operands? exps)
-      '()
-      (cons (eval (first-operand exps) env)
-            (list-of-values (rest-operands exps) env))))
-
-(define (eval-if exp env)
-  (if (true? (eval (if-predicate exp) env))
-      (eval (if-consequent exp) env)
-      (eval (if-alternative exp) env)))
-
+;eval sequence
 (define (eval-sequence exps env)
-  (cond ((last-exp? exps)
-         (eval (first-exp exps) env))
-        (else
-         (eval (first-exp exps) env)
-         (eval-squence (rest-exps exps) env))))
+  (define (eval-sequence-recusion remain-exps val)
+    (if (null? remain-exps)
+        val
+        (eval-sequence-recusion
+         (rest-exps remain-exps)
+         (eval (first-exp remain-exps)))))
+  (eval-sequence-recusion exps val))
 
-(define (eval-assignment exp env)
-  (set-variable-value! (assigment-variable exp)
-                       (eval (assignment-value exp) env)
-                       env)
-  'ok)
 
-(define (eval-definition exp env)
-  (define-variable! (definition-variable exp)
-    (eval (definition-value exp) env)
-    env)
-  'ok)
-
-;; exercise 4.1
-(define (list-of-value-lr exps env)
-  (if (no-operands? exps)
-      '()
-      (let ((left (eval (first-operand exps) env))
-            (right (list-of-values (reset-operands exps) env)))
-        (cons left right))))
-
-(define (list-of-value-rl exps env)
-  (if (no-operands? exps)
-      '()
-      (let ((right (list-of-values (reset-operands exps) env))
-            (left (eval (first-operand exps) env)))
-        (cons left right))))
-
-(define (self-evaluating? exp)
-  (cond ((number? exp) true)
-        ((string? exp) true)
-        (else false)))
-
-(define variable? symbol?)
-
-(define (quoted? exp) (tagged-list? exp 'quote))
-(define (text-of-quotation exp) (cadr exp))
+;some util
 (define (tagged-list? exp tag)
   (if (pair? exp)
       (eq? (car exp) tag)
       false))
 
-(define (assignment? exp) (tagged-list? exp 'set!))
-(define (assignment-variable exp) (cadr exp))
-(define (assignment-value exp) (caddr exp))
-
-
-(define (definition? exp) (tagged-list? exp 'define))
-(define (definition-variable exp)
-  (if (symbol? (cadr exp))
-      (cadr exp)
-      (caadr exp)))
-(define (definition-value exp)
-  (if (symbol? (cadr exp))
-      (caddr exp)
-      (make-lambda (cdadr exp) (cddr exp))))
-
-(define (lambda? exp) (tagged-list? exp 'lambda))
-(define (lambda-parameters exp) (cadr exp))
-(define (lambda-body exp) (cddr exp))
-
-(define (make-lambda parameters body)
-  (cons 'lambda (cons parameters body)))
-
-(define (if? exp) (tagged-list? exp 'if))
-(define (if-predicate exp) (cadr exp))
-(define (if-consequent exp) (caddr exp))
-(define (if-alternative exp)
-  (if (not (null? (cdddr exp)))
-      (cadddr exp)
-      'false))
-
-(define (make-if predicate consequent alternative)
-  (list 'if predicate consquent alternative))
-
+;define begin
 (define (begin? exp) (tagged-list? exp 'begin))
 (define (begin-actions exp) (cdr exp))
+(define (make-begin seq)
+  (cons 'begin seq))
 
+;define expression
 (define (last-exp? seq) (null? (cdr seq)))
 (define (first-exp seq) (car seq))
 (define (rest-exps seq) (cdr seq))
@@ -137,56 +66,130 @@
   (cond ((null? seq) seq)
         ((last-exp? seq) (first-exp seq))
         (else (make-begin seq))))
-(define (make-begin seq)
-  (cons 'begin seq))
 
-
+;define application
 (define (application? exp) (pair? exp))
 (define (operator exp) (car exp))
 (define (operands exp) (cdr exp))
+;; exercise 4.2
+(define (application?-4.2 exp) (tagged-list? exp 'call))
+(define (operator-4.2 exp) (cadr exp))
+(define (operands-4.2 exp) (cddr exp))
+;; for operands
 (define (no-operands? ops) (null? ops))
 (define (first-operand ops) (car ops))
 (define (rest-operands ops) (cdr ops))
+;; eval operands
+(define (list-of-values exp env)
+  (map (lambda (operand)
+         (eval operand env))
+       (operands exp)))
+;; exercise 4.1
+(define (list-of-value-lr exps env)
+  (if (no-operands? exps)
+      '()
+      (let ((left (eval (first-operand exps) env))
+            (right (list-of-values (reset-operands exps) env)))
+        (cons left right))))
+(define (list-of-value-rl exps env)
+  (if (no-operands? exps)
+      '()
+      (let ((right (list-of-values (reset-operands exps) env))
+            (left (eval (first-operand exps) env)))
+        (cons left right))))
 
+;define quoted?
+(define (quoted? exp) (tagged-list? exp 'quote))
+(define (text-of-quotation exp) (cadr exp))
 
+;; exercise 4.4 define "and" and "or"
+(define (and? exp) (tagged-list? exp 'and))
+(define (eval-and exp env)
+  (cond ((null? exp) (error "And's arguments number can not be zero: EVAL-AND " exp))
+        ((last-exp? exp) (eval (first-exp exp) env))
+        (else
+         (let ((b (eval (first-exp exp) env)))
+           (if b
+               (eval-and (rest-exps exp) env)
+               'false)))))
+(define (or? exp) (tagged-list? exp 'or))
+(define (eval-or exp env)
+  (cond ((null? exp) (error "Or's arguments number can not be zero: EVAL-AND " exp))
+        ((last-exp? exp) (eval (first-exp exp) env))
+        (else
+         (let ((b (eval (first-exp exp) env)))
+           (if b
+               'true
+               (eval-or (rest-exps exp) env))))))
+
+;define if
+(define (if? exp) (tagged-list? exp 'if))
+(define (if-predicate exp) (cadr exp))
+(define (if-consequent exp) (caddr exp))
+(define (if-alternative exp)
+  (let ((alternative-clause (cdddr exp)))
+    (if (null? alternative-clause)
+        'flase
+        alternative-clause)))
+(define (make-if predicate consequent alternative)
+  (list 'if predicate consquent alternative))
+(define (eval-if exp env)
+  (if (true? (eval (if-predicate exp) env))
+      (eval (if-consequent exp) env)
+      (eval (if-alternative exp) env)))
+
+;define cond by expanding it to if expression
+;;for cond
 (define (cond? exp) (tagged-list? exp 'cond))
 (define (cond-clauses exp) (cdr exp))
-
-(define (cond-predicate clause) (car clause))
-
+;;for cond clause
 (define (cond-else-clause? clause)
   (eq? (cond-predicate clause) 'else))
+;;e4.5 usage:
+;> (cond ((assoc 'b '((a 1) (b 2))) => cadr)
+;        (else false))
+;> 2
 (define (cond-addition-clause? clause)
   (eq? (cadr clause) '=>))
-
+(define (cond-predicate clause) (car clause))
 (define (cond-actions clause) (cdr clause))
 (define (cond-actions-additional clause) (cddr clause))
-(define (cond->if exp) (expand-clause (cond-clause exp)))
+(define (cond->if exp) (expand-clause (cond-clauses exp)))
 (define (expand-clauses clauses)
   (if (null? clauses)
       'false
-      (let ((first (car clauses))
-            (rest (cdr clauses)))
-        (cond ((cond-else-clause? first)
+      (let ((first-clause (car clauses))
+            (rest-clauses (cdr clauses)))
+        (cond ((cond-else-clause? first-clause)
                (if (null? rest)
-                   (sequence->exp (cond-actions first))
-                   (error "ELSE clause isn't last: COND->IF"
-                          clauses)))
+                   (sequence->exp (cond-actions first-clause))
+                   (error "ELSE clause isn't last: COND->IF" clauses)))
               ;; exercise 4.5
-              ((cond-addition-clause? first)
-               (let ((predicate (cond-predicate first)))
+              ((cond-addition-clause? first-clause)
+               (let ((predicate (cond-predicate first-clause)))
                  (make-if (predicate)
-                          (list (sequence->exp (cond-actions-additional first)) predicate)
+                          (list (sequence->exp (cond-actions-additional first-clause)) predicate)
                           (expand-clause rest))))
               (else
                (make-if (cond-predicate first)
                         (sequence->exp (cond-actions first))
                         (expand-clause rest)))))))
 
-;; exercise 4.2
-(define (application?-4.2 exp) (tagged-list? exp 'call))
-(define (operator-4.2 exp) (cadr exp))
-(define (operands-4.2 exp) (cddr exp))
+;define self evaluating exp
+(define (self-evaluating? exp)
+  (cond ((number? exp) true)
+        ((string? exp) true)
+        (else false)))
+
+;define variable
+(define variable? symbol?)
+
+;define lambda
+(define (lambda? exp) (tagged-list? exp 'lambda))
+(define (lambda-parameters exp) (cadr exp))
+(define (lambda-body exp) (cddr exp))
+(define (make-lambda parameters body)
+  (cons 'lambda (cons parameters body)))
 
 ;; exercise 4.3
 (require "data-direct.scm")
@@ -203,7 +206,6 @@
                     (eval-sequence (begin-actions exp) env)))
 (put 'eval 'cond (lambda (exp env)
                    (eval-4.3 (cond-if exp) env)))
-
 (define (eval-4.3 exp env)
   (cond ((self-evaluating? exp) exp)
         ((variable? exp) (lookup-variable-value exp env))
@@ -214,28 +216,7 @@
         (else
          (error "Unknown expression type: EVAL" exp))))
 
-;; exercise 4.4
-(define (and? exp) (tagged-list? exp 'and))
 
-(define (eval-and exp env)
-  (cond ((null? exp) (error "And's arguments number can not be zero: EVAL-AND " exp))
-        ((last-exp? exp) (eval (first-exp exp) env))
-        (else
-         (let ((b (eval (first-exp exp) env)))
-           (if b
-               (eval-and (rest-exps exp) env)
-               'false)))))
-
-(define (or? exp) (tagged-list? exp 'or))
-
-(define (eval-or exp env)
-  (cond ((null? exp) (error "Or's arguments number can not be zero: EVAL-AND " exp))
-        ((last-exp? exp) (eval (first-exp exp) env))
-        (else
-         (let ((b (eval (first-exp exp) env)))
-           (if b
-               'true
-               (eval-or (rest-exps exp) env))))))
 
 ;; exercise 4.6
 (define (let? exp)
@@ -320,7 +301,7 @@
 
 
 (define (true? x)
-(not (eq? x false)))
+  (not (eq? x false)))
 (define (false? x) (eq? x false))
 
 
@@ -336,13 +317,15 @@
 (define (first-frame env) (car env))
 (define the-empty-environment '())
 
+;;e4.11
 (define (make-frame variables values)
-  (cons variables values))
-(define (frame-variables frame) (car frame))
-(define (frame-values frame) (cdr frame))
+  (map (lambda (variable value) (cons variable value)) variables values))
+(define (frame-variables frame)
+  (map (lambda (pair) (car pair)) frame))
+(define (frame-values frame)
+  (map (lambda (pair) (cdr pair)) frame))
 (define (add-binding-to-frame! var val frame)
-  (set-car! frame (cons var (car frame)))
-  (set-cdr! frame (cons val (cdr frame))))\
+  (cons '(var . val) frame))
 
 (define (extend-environment vars vals base-env)
   (if (= (length vars) (length vals))
@@ -351,18 +334,60 @@
           (error "Too many arguments supplied" vars vals)
           (error "Too few arguments supplied" vars vals))))
 
-(define (lookup-variable-value var env)
+;;e4.12
+(define (traversing-variables env variable if-find if-not-find)
   (define (env-look env)
     (define (scan vars vals)
       (cond ((null? vars)
-             (env-lop (enclosing-environment env)))
-            ((eq? var (car vars)) (car vals))
+             (env-loop (enclosing-environment env)))
+            ((eq? variable (car vars)) (if-find vars vals))
             (else (scan (cdr vars) (cdr vals)))))
     (if (eq? env the-empty-enviroment)
-        (error "Unbound variable" var)
+        (if-not-find env)
         (let ((frame (first-frame env)))
           (scan (frame-variables frame)
                 (frame-values frame)))))
-  (env-loop env))
+  (env-look env))
+(define (set-variable-value! var val env)
+  (traversing-variables env var (lambda (vars vals) (set-car? vals val))
+                        (lambda (env) (error "Unbound variable: SET!" var))))
+(define (define-variable! var val env)
+  (traversing-variables
+   (list (car env))
+   var
+   (lambda (vars vals)
+     (set-car? vals val))
+   (lambda (env)
+     (add-binding-to-frame!
+      var val (first-frame env)))))
+(define (lookup-variable-value var env)
+  (traversing-variables env var (lambda (vars vals) (car vals))
+                        (lambda (env) (error "Unbound variable" var))))
 
-;; p515
+
+;define assignment
+(define (assignment? exp) (tagged-list? exp 'set!))
+(define (assignment-variable exp) (cadr exp))
+(define (assignment-value exp) (caddr exp))
+(define (eval-assignment exp env)
+  (set-variable-value! (assigment-variable exp)
+                       (eval (assignment-value exp) env)
+                       env)
+  'ok)
+
+;define definition
+(define (definition? exp) (tagged-list? exp 'define))
+(define (definition-variable exp)
+  (if (symbol? (cadr exp))
+      (cadr exp)
+      (caadr exp)))
+(define (definition-value exp)
+  (if (symbol? (cadr exp))
+      (caddr exp)
+      (make-lambda (cdadr exp) (cddr exp))))
+(define (eval-definition exp env)
+  (define-variable!
+    (definition-variable exp)
+    (eval (definition-value exp) env)
+    env)
+  'ok)

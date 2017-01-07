@@ -9,6 +9,8 @@
         ((lambda? exp) (make-procedure (lambda-parameters exp)
                                        (lambda-body exp)
                                        env))
+        ((let? exp) (eval (let->combination exp) env))
+        ((let*? exp) (eval (let*->nested-lets exp) env))
         ((begin? exp)
          (eval-sequence (begin-actions exp) env))
         ((cond? exp) (eval (cond->if exp) env))
@@ -32,7 +34,7 @@
         (else
          (error "Unknown procedure type: APPLY" procedure))))
 
-(define (list-of-value exps env)
+(define (list-of-values exps env)
   (if (no-operands? exps)
       '()
       (cons (eval (first-operand exps) env)
@@ -149,24 +151,37 @@
 
 (define (cond? exp) (tagged-list? exp 'cond))
 (define (cond-clauses exp) (cdr exp))
+
+(define (cond-predicate clause) (car clause))
+
 (define (cond-else-clause? clause)
   (eq? (cond-predicate clause) 'else))
-(define (cond-predicate clause) (car clause))
+(define (cond-addition-clause? clause)
+  (eq? (cadr clause) '=>))
+
 (define (cond-actions clause) (cdr clause))
+(define (cond-actions-additional clause) (cddr clause))
 (define (cond->if exp) (expand-clause (cond-clause exp)))
 (define (expand-clauses clauses)
   (if (null? clauses)
       'false
       (let ((first (car clauses))
             (rest (cdr clauses)))
-        (if (cond-else-clause? first)
-            (if (null? rest)
-                (sequence-exp (cond-actions first))
-                (error "ELSE clause isn't last: COND->IF"
-                       clauses))
-            (make-if (cond-predicate first)
-                     (sequence-exp (cond-actions first))
-                     (expand-clause rest))))))
+        (cond ((cond-else-clause? first)
+               (if (null? rest)
+                   (sequence->exp (cond-actions first))
+                   (error "ELSE clause isn't last: COND->IF"
+                          clauses)))
+              ;; exercise 4.5
+              ((cond-addition-clause? first)
+               (let ((predicate (cond-predicate first)))
+                 (make-if (predicate)
+                          (list (sequence->exp (cond-actions-additional first)) predicate)
+                          (expand-clause rest))))
+              (else
+               (make-if (cond-predicate first)
+                        (sequence->exp (cond-actions first))
+                        (expand-clause rest)))))))
 
 ;; exercise 4.2
 (define (application?-4.2 exp) (tagged-list? exp 'call))
@@ -222,3 +237,132 @@
                'true
                (eval-or (rest-exps exp) env))))))
 
+;; exercise 4.6
+(define (let? exp)
+  (tagged-list? exp 'let))
+(define let-variables cadr)
+(define let-body cddr)
+(define (let-variables-> fun)
+  (define (helper variables)
+    (if (null? variables)
+        '()
+        (cons (fun (car variables)) (helper (cdr variables)))))
+  helper)
+(define let-variables->parameters (let-variables-> car))
+(define let-variables->argument (let-variables-> cadr))
+(define (let->combination exp)
+  `(apply ,(make-lambda (let-variables->parameters (let-variables exp))
+                 ,(let-body exp))
+    (let-variables->argument (let-variables exp))))
+(define (make-let variables body)
+  (list 'let variables body))
+
+;; exercise 4.7
+(define (let*? exp)
+  (tagged-list? exp 'let*))
+
+(define (expand-let* variables body)
+  (if (null? variables)
+      body
+      (make-let (list (car variables))
+                (expand-let* (cdr variables) body))))
+
+(define (let*->nested-lets exp)
+  (expand-let* (let-variables exp) (let-body exp)))
+
+;; exercise 4.8
+
+(define (make-function function-name function-parameters body)
+  (list 'define (cons function-name function-parameters) body))
+
+
+
+(define (named-let? exp)
+  (variable? (cadr exp)))
+
+(define named-let-name cadr)
+(define named-let-variables caddr)
+(define named-let-body cdddr)
+
+(define (let->combination-4.8 exp)
+  (if (named-let? exp)
+      (make-begin (list (make-function
+                         (named-let-name exp)
+                         (let-variables->parameters (named-let-variables exp))
+                         (named-let-body exp))
+                        (list 'apply
+                              (named-let-name exp)
+                              (let-variables->arguments (named-let-variables exp)))))
+      `(apply ,(make-lambda (let-variables->parameters (let-variables exp))
+                            ,(let-body exp))
+              (let-variables->arguments (let-variables exp)))))
+
+
+;; exercise 4.9
+;; usage (for ((a list-of-a) (b list-of-b) <body>)
+(define for-variables let-variables)
+(define for-body let-body)
+(define for-variables->parameters let-variables->parameters)
+(define for-variables->arguments let-variables->arguments)
+(define (for->exp exp)
+  (let helper ((arguments (for-variables->arguments (for-variables exp)))
+               (parameters (for-variables->parameters (for-variables exp))))
+    (list 'apply
+          (make-lambda arguments
+                       `(if (apply and ,(map (lambda (x) '(null? x)) arguments))
+                            (cons (apply
+                                   (lambda ,parameters ,(for-body exp))
+                                   (map (lambda (x) '(car x)) arguments))
+                                  (apply helper (map (lambda (x) '(cdr x)) arguments))) 
+                            '()))
+          arguments)))
+
+
+
+(define (true? x)
+(not (eq? x false)))
+(define (false? x) (eq? x false))
+
+
+(define (make-procedure parameters body env)
+  (list 'procedure parameters body env))
+(define (compound-procedure? p)
+  (tagged-list? p 'procedure))
+(define (procedure-parameters p) (cadr p))
+(define (procedure-body p) (caddr p))
+(define (procedure-environment p) (cadddr p))
+
+(define (enclosing-environment env) (cdr env))
+(define (first-frame env) (car env))
+(define the-empty-environment '())
+
+(define (make-frame variables values)
+  (cons variables values))
+(define (frame-variables frame) (car frame))
+(define (frame-values frame) (cdr frame))
+(define (add-binding-to-frame! var val frame)
+  (set-car! frame (cons var (car frame)))
+  (set-cdr! frame (cons val (cdr frame))))\
+
+(define (extend-environment vars vals base-env)
+  (if (= (length vars) (length vals))
+      (cons (make-frame vars vals) base-env)
+      (if (< (length vars) (length vals))
+          (error "Too many arguments supplied" vars vals)
+          (error "Too few arguments supplied" vars vals))))
+
+(define (lookup-variable-value var env)
+  (define (env-look env)
+    (define (scan vars vals)
+      (cond ((null? vars)
+             (env-lop (enclosing-environment env)))
+            ((eq? var (car vars)) (car vals))
+            (else (scan (cdr vars) (cdr vals)))))
+    (if (eq? env the-empty-enviroment)
+        (error "Unbound variable" var)
+        (let ((frame (first-frame env)))
+          (scan (frame-variables frame)
+                (frame-values frame)))))
+  (env-loop env))
+
+;; p515
