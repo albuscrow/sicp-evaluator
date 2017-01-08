@@ -1,4 +1,17 @@
 #lang racket
+; import modifiable pair
+(require scheme/mpair)
+(define (list->mlist lst)
+  (if (null? lst)
+      '()
+      (mcons (car lst) (list->mlist (cdr lst)))))
+;(define cons mcons)
+;(define car mcar)
+;(define cdr mcdr)
+;(define list mlist)
+;(define set-car! set-mcar!)
+;(define set-cdr! set-mcdr!)
+
 ;eval and apply
 (define (eval exp env)
   (cond ((self-evaluating? exp) exp)
@@ -12,6 +25,7 @@
                                        env))
         ((let? exp) (eval (let->combination exp) env))
         ((let*? exp) (eval (let*->nested-lets exp) env))
+        ((for? exp) (eval (for->exp exp) env))
         ((begin? exp)
          (eval-sequence (begin-actions exp) env))
         ((cond? exp) (eval (cond->if exp) env))
@@ -27,7 +41,7 @@
         ((compound-procedure? procedure)
          (eval-sequence
           (procedure-body procedure)
-          (extend-evironment
+          (extend-environment
            (procedure-paremeters procedure)
            arguments
            (procedure-environment procedure))))
@@ -42,7 +56,7 @@
         (eval-sequence-recusion
          (rest-exps remain-exps)
          (eval (first-exp remain-exps)))))
-  (eval-sequence-recusion exps val))
+  (eval-sequence-recusion exps '()))
 
 
 ;some util
@@ -89,12 +103,12 @@
   (if (no-operands? exps)
       '()
       (let ((left (eval (first-operand exps) env))
-            (right (list-of-values (reset-operands exps) env)))
+            (right (list-of-values (rest-operands exps) env)))
         (cons left right))))
 (define (list-of-value-rl exps env)
   (if (no-operands? exps)
       '()
-      (let ((right (list-of-values (reset-operands exps) env))
+      (let ((right (list-of-values (rest-operands exps) env))
             (left (eval (first-operand exps) env)))
         (cons left right))))
 
@@ -104,23 +118,22 @@
 
 ;; exercise 4.4 define "and" and "or"
 (define (and? exp) (tagged-list? exp 'and))
-(define (eval-and exp env)
-  (cond ((null? exp) (error "And's arguments number can not be zero: EVAL-AND " exp))
-        ((last-exp? exp) (eval (first-exp exp) env))
-        (else
-         (let ((b (eval (first-exp exp) env)))
-           (if b
-               (eval-and (rest-exps exp) env)
-               'false)))))
+(define (eval-and exps env)
+  (define (eval-and-recusion remain-exps result)
+    (if (or (null? remain-exps) (not result))
+        result
+        (eval-and-recusion
+         (rest-exps remain-exps)
+         (eval (first-exp remain-exps) env))))
+  (eval-and exps 'true))
+
 (define (or? exp) (tagged-list? exp 'or))
 (define (eval-or exp env)
-  (cond ((null? exp) (error "Or's arguments number can not be zero: EVAL-AND " exp))
-        ((last-exp? exp) (eval (first-exp exp) env))
-        (else
-         (let ((b (eval (first-exp exp) env)))
-           (if b
-               'true
-               (eval-or (rest-exps exp) env))))))
+  (define (eval-or-recusion remain-exps result)
+    (if (or (null? remain-exps) result)
+        result
+        (eval-or-recusion (rest-exps remain-exps) (eval (first-exp remain-exps) env))))
+  (eval-or-recusion exp 'false))
 
 ;define if
 (define (if? exp) (tagged-list? exp 'if))
@@ -132,7 +145,7 @@
         'flase
         alternative-clause)))
 (define (make-if predicate consequent alternative)
-  (list 'if predicate consquent alternative))
+  (list 'if predicate consequent alternative))
 (define (eval-if exp env)
   (if (true? (eval (if-predicate exp) env))
       (eval (if-consequent exp) env)
@@ -154,7 +167,7 @@
 (define (cond-predicate clause) (car clause))
 (define (cond-actions clause) (cdr clause))
 (define (cond-actions-additional clause) (cddr clause))
-(define (cond->if exp) (expand-clause (cond-clauses exp)))
+(define (cond->if exp) (expand-clauses (cond-clauses exp)))
 (define (expand-clauses clauses)
   (if (null? clauses)
       'false
@@ -169,11 +182,11 @@
                (let ((predicate (cond-predicate first-clause)))
                  (make-if (predicate)
                           (list (sequence->exp (cond-actions-additional first-clause)) predicate)
-                          (expand-clause rest))))
+                          (expand-clauses rest))))
               (else
                (make-if (cond-predicate first)
                         (sequence->exp (cond-actions first))
-                        (expand-clause rest)))))))
+                        (expand-clauses rest)))))))
 
 ;define self evaluating exp
 (define (self-evaluating? exp)
@@ -192,119 +205,108 @@
   (cons 'lambda (cons parameters body)))
 
 ;; exercise 4.3
-(require "data-direct.scm")
-(put 'eval 'quoted (lambda (exp env)
-                     (text-of-quotation exp)))
-(put 'eval 'set! eval-asignment)
-(put 'eval 'define eval-definition)
-(put 'eval 'if eval-if)
-(put 'eval 'lambda (lambda (exp env)
-                     (make-procedure (lambda-parameters exp)
-                                     (lambda-body exp)
-                                     env)))
-(put 'eval 'begin (lambda (exp env)
-                    (eval-sequence (begin-actions exp) env)))
-(put 'eval 'cond (lambda (exp env)
-                   (eval-4.3 (cond-if exp) env)))
-(define (eval-4.3 exp env)
-  (cond ((self-evaluating? exp) exp)
-        ((variable? exp) (lookup-variable-value exp env))
-        ((get 'eval (car exp)) ((get 'eval (car exp)) exp env))
-        ((application? exp)
-         (apply (eval (operator exp) env)
-                (list-of-values (operands exp) env)))
-        (else
-         (error "Unknown expression type: EVAL" exp))))
+;(require "data-direct.scm")
+;(put 'eval 'quoted (lambda (exp env)
+;                     (text-of-quotation exp)))
+;(put 'eval 'set! eval-assignment)
+;(put 'eval 'define eval-definition)
+;(put 'eval 'if eval-if)
+;(put 'eval 'lambda (lambda (exp env)
+;                     (make-procedure (lambda-parameters exp)
+;                                     (lambda-body exp)
+;                                     env)))
+;(put 'eval 'begin (lambda (exp env)
+;                    (eval-sequence (begin-actions exp) env)))
+;(put 'eval 'cond (lambda (exp env)
+;                   (eval-4.3 (cond->if exp) env)))
+;(define (eval-4.3 exp env)
+;  (cond ((self-evaluating? exp) exp)
+;        ((variable? exp) (lookup-variable-value exp env))
+;        ((get 'eval (car exp)) ((get 'eval (car exp)) exp env))
+;        ((application? exp)
+;         (apply (eval (operator exp) env)
+;                (list-of-values (operands exp) env)))
+;        (else
+;         (error "Unknown expression type: EVAL" exp))))
 
 
-
-;; exercise 4.6
+;define let, let* and named-let
+;;exercise 4.6 let
 (define (let? exp)
   (tagged-list? exp 'let))
 (define let-variables cadr)
 (define let-body cddr)
-(define (let-variables-> fun)
-  (define (helper variables)
-    (if (null? variables)
-        '()
-        (cons (fun (car variables)) (helper (cdr variables)))))
-  helper)
-(define let-variables->parameters (let-variables-> car))
-(define let-variables->argument (let-variables-> cadr))
-(define (let->combination exp)
-  `(apply ,(make-lambda (let-variables->parameters (let-variables exp))
-                 ,(let-body exp))
-    (let-variables->argument (let-variables exp))))
+(define (let-variables->parameters variables)
+  (map car variables))
+(define (let-variables->arguments variables)
+  (map cadr variables))
+;(define (let->combination exp)
+;  (list (make-lambda (let-variables->parameters (let-variables exp))
+;                     (let-body exp))
+;    (let-variables->argument (let-variables exp))))
 (define (make-let variables body)
   (list 'let variables body))
-
-;; exercise 4.7
+;; exercise 4.7 let*
 (define (let*? exp)
   (tagged-list? exp 'let*))
-
 (define (expand-let* variables body)
   (if (null? variables)
       body
       (make-let (list (car variables))
                 (expand-let* (cdr variables) body))))
-
 (define (let*->nested-lets exp)
   (expand-let* (let-variables exp) (let-body exp)))
-
 ;; exercise 4.8
-
 (define (make-function function-name function-parameters body)
   (list 'define (cons function-name function-parameters) body))
-
-
-
 (define (named-let? exp)
   (variable? (cadr exp)))
-
 (define named-let-name cadr)
 (define named-let-variables caddr)
 (define named-let-body cdddr)
-
-(define (let->combination-4.8 exp)
+(define (let->combination exp)
   (if (named-let? exp)
-      (make-begin (list (make-function
-                         (named-let-name exp)
-                         (let-variables->parameters (named-let-variables exp))
-                         (named-let-body exp))
-                        (list 'apply
-                              (named-let-name exp)
-                              (let-variables->arguments (named-let-variables exp)))))
-      `(apply ,(make-lambda (let-variables->parameters (let-variables exp))
-                            ,(let-body exp))
-              (let-variables->arguments (let-variables exp)))))
+      (make-begin
+       (list (make-function
+              (named-let-name exp)
+              (let-variables->parameters (named-let-variables exp))
+              (named-let-body exp))
+             (cons
+              (named-let-name exp)
+              (let-variables->arguments (named-let-variables exp)))))
+      (cons (make-lambda (let-variables->parameters (let-variables exp))
+                         (let-body exp))
+            (let-variables->arguments (let-variables exp)))))
 
-
-;; exercise 4.9
-;; usage (for ((a list-of-a) (b list-of-b) <body>)
+;define for, exercise 4.9
+;usage (for ((a list-of-a) (b list-of-b)) <body>)
+(define (for? exp) (tagged-list? exp 'for))
 (define for-variables let-variables)
 (define for-body let-body)
 (define for-variables->parameters let-variables->parameters)
 (define for-variables->arguments let-variables->arguments)
 (define (for->exp exp)
-  (let helper ((arguments (for-variables->arguments (for-variables exp)))
-               (parameters (for-variables->parameters (for-variables exp))))
-    (list 'apply
-          (make-lambda arguments
-                       `(if (apply and ,(map (lambda (x) '(null? x)) arguments))
-                            (cons (apply
-                                   (lambda ,parameters ,(for-body exp))
-                                   (map (lambda (x) '(car x)) arguments))
-                                  (apply helper (map (lambda (x) '(cdr x)) arguments))) 
-                            '()))
-          arguments)))
+  (let* ((parameters (for-variables->parameters (for-variables exp)))
+        (arguments (for-variables->arguments (for-variables exp)))
+        (intern-parameters (map (lambda (x) (gensym)) parameters))
+        (body (for-body exp)))
+    `(begin
+       (define ,(cons 'for-loop intern-parameters)
+           (if ,(cons 'or (map (lambda (x) (list 'null? x)) intern-parameters))
+               'ok
+               (begin
+                 ,(cons
+                   (cons 'lambda (cons parameters body))
+                   (map (lambda (x) (list 'car x)) intern-parameters))
+                 ,(cons 'for-loop (map (lambda (x) (list 'cdr x)) intern-parameters)))))
+       ,(cons 'for-loop arguments))))
 
-
-
+;define true and false
 (define (true? x)
   (not (eq? x false)))
 (define (false? x) (eq? x false))
 
-
+;define procedure
 (define (make-procedure parameters body env)
   (list 'procedure parameters body env))
 (define (compound-procedure? p)
@@ -313,53 +315,61 @@
 (define (procedure-body p) (caddr p))
 (define (procedure-environment p) (cadddr p))
 
-(define (enclosing-environment env) (cdr env))
-(define (first-frame env) (car env))
-(define the-empty-environment '())
-
+;define env
+(define (enclosing-environment env) (mcdr env))
+(define (first-frame env) (mcar env))
+(define (rest-frames env) (mcdr env))
+(define the-empty-environment (mlist))
 ;;e4.11
 (define (make-frame variables values)
-  (map (lambda (variable value) (cons variable value)) variables values))
+  (mmap (lambda (variable value) (mcons variable value)) variables values))
 (define (frame-variables frame)
-  (map (lambda (pair) (car pair)) frame))
+  (mmap (lambda (pair) (mcar pair)) frame))
 (define (frame-values frame)
-  (map (lambda (pair) (cdr pair)) frame))
+  (mmap (lambda (pair) (mcdr pair)) frame))
 (define (add-binding-to-frame! var val frame)
-  (cons '(var . val) frame))
+  (mcons (mcons var val) frame))
 
 (define (extend-environment vars vals base-env)
-  (if (= (length vars) (length vals))
-      (cons (make-frame vars vals) base-env)
-      (if (< (length vars) (length vals))
-          (error "Too many arguments supplied" vars vals)
-          (error "Too few arguments supplied" vars vals))))
+  (let ((vars-mlist (list->mlist vars))
+        (vals-mlist (list->mlist vals))
+        (vars-length (length vars))
+        (vals-length (length vals)))
+    (if (= vars-length vals-length)
+        (mcons (make-frame vars-mlist vals-mlist) base-env)
+        (if (< vars-length vals-length)
+            (error "Too many arguments supplied" vars vals)
+            (error "Too few arguments supplied" vars vals)))))
 
 ;;e4.12
 (define (traversing-variables env variable if-find if-not-find)
-  (define (env-look env)
+  (define (env-loop env)
     (define (scan vars vals)
       (cond ((null? vars)
              (env-loop (enclosing-environment env)))
-            ((eq? variable (car vars)) (if-find vars vals))
-            (else (scan (cdr vars) (cdr vals)))))
-    (if (eq? env the-empty-enviroment)
+            ((eq? variable (mcar vars)) (if-find vars vals))
+            (else (scan (mcdr vars) (mcdr vals)))))
+    (if (eq? env the-empty-environment)
         (if-not-find env)
         (let ((frame (first-frame env)))
           (scan (frame-variables frame)
                 (frame-values frame)))))
-  (env-look env))
+  (env-loop env))
+
 (define (set-variable-value! var val env)
-  (traversing-variables env var (lambda (vars vals) (set-car? vals val))
+  (traversing-variables env var (lambda (vars vals) (set-mcar! vals val))
                         (lambda (env) (error "Unbound variable: SET!" var))))
+
 (define (define-variable! var val env)
   (traversing-variables
-   (list (car env))
+   (mlist (mcar env))
    var
    (lambda (vars vals)
-     (set-car? vals val))
+     (set-mcar! vals val))
    (lambda (env)
      (add-binding-to-frame!
       var val (first-frame env)))))
+
 (define (lookup-variable-value var env)
   (traversing-variables env var (lambda (vars vals) (car vals))
                         (lambda (env) (error "Unbound variable" var))))
@@ -370,7 +380,7 @@
 (define (assignment-variable exp) (cadr exp))
 (define (assignment-value exp) (caddr exp))
 (define (eval-assignment exp env)
-  (set-variable-value! (assigment-variable exp)
+  (set-variable-value! (assignment-variable exp)
                        (eval (assignment-value exp) env)
                        env)
   'ok)
@@ -391,3 +401,22 @@
     (eval (definition-value exp) env)
     env)
   'ok)
+
+;define unbound e4.13
+(define (make-unbound!? exp)
+  (tagged-list? exp 'make-unbound!))
+
+(define (make-unbound!-variable exp)
+  (cadr exp))
+
+(define (unbound-variable! var env)
+  (traversing-variables
+   (mlist (mcar env))
+   var
+   (lambda (vars vals)
+     (set-mcar! vals val))
+   (lambda (env)
+     (error "Unbound variable" var))))
+
+(define (eval-unbound exp env)
+  (unbound-variable! (make-unbound!-variable exp) env))
