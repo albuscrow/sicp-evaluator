@@ -13,6 +13,22 @@
 ;(define set-cdr! set-mcdr!)
 
 ;eval and apply
+
+(define apply-in-underlying-scheme apply)
+
+(define (apply procedure arguments)
+  (cond ((primitive-procedure? procedure)
+         (apply-primitive-procedure procedure arguments))
+        ((compound-procedure? procedure)
+         (eval-sequence
+          (procedure-body procedure)
+          (extend-environment
+           (procedure-parameters procedure)
+           arguments
+           (procedure-environment procedure))))
+        (else
+         (error "Unknown procedure type: APPLY" procedure))))
+
 (define (eval exp env)
   (cond ((self-evaluating? exp) exp)
         ((variable? exp) (lookup-variable-value exp env))
@@ -35,18 +51,6 @@
         (else
          (error "Unknown expression type: EVAL" exp))))
 
-(define (apply procedure arguments)
-  (cond ((primitive-procedure? procedure)
-         (apply-primitive-procedure procedure argements))
-        ((compound-procedure? procedure)
-         (eval-sequence
-          (procedure-body procedure)
-          (extend-environment
-           (procedure-paremeters procedure)
-           arguments
-           (procedure-environment procedure))))
-        (else
-         (error "Unknown procedure type: APPLY" procedure))))
 
 ;eval sequence
 (define (eval-sequence exps env)
@@ -322,13 +326,11 @@
 (define the-empty-environment (mlist))
 ;;e4.11
 (define (make-frame variables values)
-  (mmap (lambda (variable value) (mcons variable value)) variables values))
-(define (frame-variables frame)
-  (mmap (lambda (pair) (mcar pair)) frame))
-(define (frame-values frame)
-  (mmap (lambda (pair) (mcdr pair)) frame))
+  (mcons 'frame (mmap (lambda (variable value) (mcons variable value)) variables values)))
 (define (add-binding-to-frame! var val frame)
-  (mcons (mcons var val) frame))
+  (set-mcdr! frame (mcons (mcons var val) (frame-bindings frame))))
+(define (frame-bindings frame)
+  (mcdr frame))
 
 (define (extend-environment vars vals base-env)
   (let ((vars-mlist (list->mlist vars))
@@ -343,36 +345,40 @@
 
 ;;e4.12
 (define (traversing-variables env variable if-find if-not-find)
-  (define (env-loop env)
-    (define (scan vars vals)
-      (cond ((null? vars)
-             (env-loop (enclosing-environment env)))
-            ((eq? variable (mcar vars)) (if-find vars vals))
-            (else (scan (mcdr vars) (mcdr vals)))))
-    (if (eq? env the-empty-environment)
+  (define (env-loop current-env)
+    (define (scan pairs)
+      (cond ((null? pairs)
+             (env-loop (enclosing-environment current-env)))
+            ((eq? variable (mcar (mcar pairs))) (if-find pairs))
+            (else (scan (mcdr pairs)))))
+    (if (eq? current-env the-empty-environment)
         (if-not-find env)
-        (let ((frame (first-frame env)))
-          (scan (frame-variables frame)
-                (frame-values frame)))))
+        (scan (frame-bindings (first-frame current-env)))))
   (env-loop env))
 
+
+
 (define (set-variable-value! var val env)
-  (traversing-variables env var (lambda (vars vals) (set-mcar! vals val))
-                        (lambda (env) (error "Unbound variable: SET!" var))))
+  (define (set-first-pairs-val! pairs)
+    (set-mcdr! (mcar pairs) val))
+  (traversing-variables
+   env var set-first-pairs-val!
+   (lambda (env) (error "Unbound variable: SET!" var))))
 
 (define (define-variable! var val env)
+    (define (set-first-pairs-val! pairs)
+      (set-mcdr! (mcar pairs) val))
   (traversing-variables
-   (mlist (mcar env))
-   var
-   (lambda (vars vals)
-     (set-mcar! vals val))
+   (mlist (mcar env)) var set-first-pairs-val!
    (lambda (env)
      (add-binding-to-frame!
       var val (first-frame env)))))
 
 (define (lookup-variable-value var env)
-  (traversing-variables env var (lambda (vars vals) (car vals))
-                        (lambda (env) (error "Unbound variable" var))))
+  (traversing-variables
+   env var
+   (lambda (pairs) (mcdr (mcar pairs)))
+   (lambda (env) (error "Unbound variable" var))))
 
 
 ;define assignment
@@ -402,7 +408,7 @@
     env)
   'ok)
 
-;define unbound e4.13
+;define unbound e4.13 only find in local env
 (define (make-unbound!? exp)
   (tagged-list? exp 'make-unbound!))
 
@@ -411,12 +417,74 @@
 
 (define (unbound-variable! var env)
   (traversing-variables
-   (mlist (mcar env))
-   var
-   (lambda (vars vals)
-     (set-mcar! vals val))
+   (mlist (mcar env)) var
+   (lambda (pairs)
+     (define (helper dst-pairs src-pairs)
+       (set-mcar! dst-pairs (mcar src-pairs))
+       (if (null? (mcdr src-pairs))
+           (set-mcdr! dst-pairs '())
+           (helper (mcdr dst-pairs) (mcdr src-pairs))))
+     (helper pairs (mcdr pairs)))
    (lambda (env)
      (error "Unbound variable" var))))
 
 (define (eval-unbound exp env)
   (unbound-variable! (make-unbound!-variable exp) env))
+
+
+
+;define primitive-procedure
+(define (primitive-procedure? proc)
+  (tagged-list? proc 'primitive))
+(define (primitive-implementation proc) (cadr proc))
+(define primitive-procedures
+  (list (list 'car car)
+        (list 'cdr cdr)
+        (list 'cons cons)
+        (list 'null? null?)))
+(define (primitive-procedure-names)
+  (map car primitive-procedures))
+(define (primitive-procedure-objects)
+  (map (lambda (proc) (list 'primitive (cadr proc)))
+       primitive-procedures))
+
+(define (setup-environment)
+  (let ((initial-env
+         (extend-environment (primitive-procedure-names)
+                             (primitive-procedure-objects)
+                             the-empty-environment)))
+    (define-variable! 'true true initial-env)
+    (define-variable! 'false false initial-env)
+    initial-env))
+(define the-global-environment (setup-environment))
+
+
+
+(define (apply-primitive-procedure proc args)
+  (apply-in-underlying-scheme
+   (primitive-implementation proc) args))
+
+(define input-prompt ";;; M-Eval input:")
+(define output-prompt ";;; M-Eval value:")
+(define (driver-loop)
+  (prompt-for-input input-prompt)
+  (let ((input (read)))
+    (let ((output (eval input the-global-environment)))
+      (announce-output output-prompt)
+      (user-print output)))
+  (driver-loop))
+
+(define (prompt-for-input string)
+  (newline) (newline) (display string) (newline))
+(define (announce-output string)
+  (newline) (display string) (newline))
+
+(define (user-print object)
+  (if (compound-procedure? object)
+      (display (list 'compound-procedure
+                     (procedure-parameters object)
+                     (procedure-body object)
+                     '<procedure-env>))
+      (display object)))
+
+(driver-loop)
