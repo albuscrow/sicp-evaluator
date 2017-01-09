@@ -14,9 +14,14 @@
 
 ;eval and apply
 
-(define apply-in-underlying-scheme apply)
 
-(define (apply procedure arguments)
+(define (ac-apply procedure arguments)
+  (print "INFO ac-apply: ")
+  (print arguments)
+  (newline)
+  (print procedure)
+  (newline)
+  (newline)
   (cond ((primitive-procedure? procedure)
          (apply-primitive-procedure procedure arguments))
         ((compound-procedure? procedure)
@@ -46,7 +51,7 @@
          (eval-sequence (begin-actions exp) env))
         ((cond? exp) (eval (cond->if exp) env))
         ((application? exp)
-         (apply (eval (operator exp) env)
+         (ac-apply (eval (operator exp) env)
                 (list-of-values (operands exp) env)))
         (else
          (error "Unknown expression type: EVAL" exp))))
@@ -59,7 +64,7 @@
         val
         (eval-sequence-recusion
          (rest-exps remain-exps)
-         (eval (first-exp remain-exps)))))
+         (eval (first-exp remain-exps) env))))
   (eval-sequence-recusion exps '()))
 
 
@@ -98,10 +103,10 @@
 (define (first-operand ops) (car ops))
 (define (rest-operands ops) (cdr ops))
 ;; eval operands
-(define (list-of-values exp env)
+(define (list-of-values operands env)
   (map (lambda (operand)
          (eval operand env))
-       (operands exp)))
+       operands))
 ;; exercise 4.1
 (define (list-of-value-lr exps env)
   (if (no-operands? exps)
@@ -228,7 +233,7 @@
 ;        ((variable? exp) (lookup-variable-value exp env))
 ;        ((get 'eval (car exp)) ((get 'eval (car exp)) exp env))
 ;        ((application? exp)
-;         (apply (eval (operator exp) env)
+;         (ac-apply (eval (operator exp) env)
 ;                (list-of-values (operands exp) env)))
 ;        (else
 ;         (error "Unknown expression type: EVAL" exp))))
@@ -324,13 +329,28 @@
 (define (first-frame env) (mcar env))
 (define (rest-frames env) (mcdr env))
 (define the-empty-environment (mlist))
-;;e4.11
+;;define frame e4.11
 (define (make-frame variables values)
   (mcons 'frame (mmap (lambda (variable value) (mcons variable value)) variables values)))
 (define (add-binding-to-frame! var val frame)
   (set-mcdr! frame (mcons (mcons var val) (frame-bindings frame))))
 (define (frame-bindings frame)
   (mcdr frame))
+;;define pair
+(define (first-pair pairs)
+  (mcar pairs))
+(define (rest-pairs pairs)
+  (mcdr pairs))
+(define (variable pair)
+  (mcar pair))
+(define (value pair)
+  (mcdr pair))
+(define (set-value! pair val)
+  (set-mcdr! pair val))
+(define (set-first-pair! pairs pair)
+  (set-mcar! pairs pair))
+(define (delete-reset-pairs! pairs)
+  (set-mcdr! pairs '()))
 
 (define (extend-environment vars vals base-env)
   (let ((vars-mlist (list->mlist vars))
@@ -349,27 +369,26 @@
     (define (scan pairs)
       (cond ((null? pairs)
              (env-loop (enclosing-environment current-env)))
-            ((eq? variable (mcar (mcar pairs))) (if-find pairs))
-            (else (scan (mcdr pairs)))))
+            ((eq? variable (variable (first-pair pairs))) (if-find pairs))
+            (else (scan (rest-pairs pairs)))))
     (if (eq? current-env the-empty-environment)
         (if-not-find env)
         (scan (frame-bindings (first-frame current-env)))))
   (env-loop env))
 
 
-
 (define (set-variable-value! var val env)
   (define (set-first-pairs-val! pairs)
-    (set-mcdr! (mcar pairs) val))
+    (set-value! (first-pair pairs) val))
   (traversing-variables
    env var set-first-pairs-val!
    (lambda (env) (error "Unbound variable: SET!" var))))
 
 (define (define-variable! var val env)
     (define (set-first-pairs-val! pairs)
-      (set-mcdr! (mcar pairs) val))
+      (set-value! (first-pair pairs) val))
   (traversing-variables
-   (mlist (mcar env)) var set-first-pairs-val!
+   (mlist (first-frame env)) var set-first-pairs-val!
    (lambda (env)
      (add-binding-to-frame!
       var val (first-frame env)))))
@@ -377,7 +396,7 @@
 (define (lookup-variable-value var env)
   (traversing-variables
    env var
-   (lambda (pairs) (mcdr (mcar pairs)))
+   (lambda (pairs) (value (first-pair pairs)))
    (lambda (env) (error "Unbound variable" var))))
 
 
@@ -417,14 +436,14 @@
 
 (define (unbound-variable! var env)
   (traversing-variables
-   (mlist (mcar env)) var
+   (mlist (first-frame env)) var
    (lambda (pairs)
      (define (helper dst-pairs src-pairs)
-       (set-mcar! dst-pairs (mcar src-pairs))
-       (if (null? (mcdr src-pairs))
-           (set-mcdr! dst-pairs '())
-           (helper (mcdr dst-pairs) (mcdr src-pairs))))
-     (helper pairs (mcdr pairs)))
+       (set-first-pair! dst-pairs (first-pair src-pairs))
+       (if (null? (rest-pairs src-pairs))
+           (delete-reset-pairs! dst-pairs)
+           (helper (rest-pairs dst-pairs) (rest-pairs src-pairs))))
+     (helper pairs (rest-pairs pairs)))
    (lambda (env)
      (error "Unbound variable" var))))
 
@@ -441,6 +460,7 @@
   (list (list 'car car)
         (list 'cdr cdr)
         (list 'cons cons)
+        (list 'list list)
         (list 'null? null?)))
 (define (primitive-procedure-names)
   (map car primitive-procedures))
@@ -458,10 +478,8 @@
     initial-env))
 (define the-global-environment (setup-environment))
 
-
-
 (define (apply-primitive-procedure proc args)
-  (apply-in-underlying-scheme
+  (apply
    (primitive-implementation proc) args))
 
 (define input-prompt ";;; M-Eval input:")
@@ -487,4 +505,10 @@
                      '<procedure-env>))
       (display object)))
 
-(driver-loop)
+(eval '(define (append x y)
+         (if (null? x)
+             y
+             (cons (car x) (append (cdr x) y)))) the-global-environment)
+(eval '(append (list 1 2 3) (list 4 5 6)) the-global-environment)
+;run
+;(driver-loop)
