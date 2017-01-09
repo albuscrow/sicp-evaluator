@@ -51,6 +51,10 @@
          (eval-sequence (begin-actions exp) env))
         ((cond? exp) (eval (cond->if exp) env))
         ((application? exp)
+         (display "INFO eval call application: ")
+         (display exp)
+         (newline)
+         (newline)
          (ac-apply (eval (operator exp) env)
                 (list-of-values (operands exp) env)))
         (else
@@ -104,6 +108,10 @@
 (define (rest-operands ops) (cdr ops))
 ;; eval operands
 (define (list-of-values operands env)
+  (display "INFO list-of-values: ")
+  (display operands)
+  (newline)
+  (newline)
   (map (lambda (operand)
          (eval operand env))
        operands))
@@ -152,7 +160,7 @@
   (let ((alternative-clause (cdddr exp)))
     (if (null? alternative-clause)
         'flase
-        alternative-clause)))
+        (car alternative-clause))))
 (define (make-if predicate consequent alternative)
   (list 'if predicate consequent alternative))
 (define (eval-if exp env)
@@ -341,7 +349,7 @@
   (mcar pairs))
 (define (rest-pairs pairs)
   (mcdr pairs))
-(define (variable pair)
+(define (pair-variable pair)
   (mcar pair))
 (define (value pair)
   (mcdr pair))
@@ -351,6 +359,14 @@
   (set-mcar! pairs pair))
 (define (delete-reset-pairs! pairs)
   (set-mcdr! pairs '()))
+
+(define (display-mlist pairs)
+  (if (null? pairs)
+      (newline)
+      (begin
+        (print (first-pair pairs))
+        (newline)
+        (display-mlist (rest-pairs pairs)))))
 
 (define (extend-environment vars vals base-env)
   (let ((vars-mlist (list->mlist vars))
@@ -369,7 +385,7 @@
     (define (scan pairs)
       (cond ((null? pairs)
              (env-loop (enclosing-environment current-env)))
-            ((eq? variable (variable (first-pair pairs))) (if-find pairs))
+            ((eq? variable (pair-variable (first-pair pairs))) (if-find pairs))
             (else (scan (rest-pairs pairs)))))
     (if (eq? current-env the-empty-environment)
         (if-not-find env)
