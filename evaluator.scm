@@ -14,14 +14,12 @@
 
 ;eval and apply
 
+(define (ac-output . param)
+  (map (lambda (p) (display p)) param)
+  'ok)
 
 (define (ac-apply procedure arguments)
-  (print "INFO ac-apply: ")
-  (print arguments)
-  (newline)
-  (print procedure)
-  (newline)
-  (newline)
+  (ac-output "INFO ac-apply: " procedure " " arguments "\n\n")
   (cond ((primitive-procedure? procedure)
          (apply-primitive-procedure procedure arguments))
         ((compound-procedure? procedure)
@@ -35,32 +33,35 @@
          (error "Unknown procedure type: APPLY" procedure))))
 
 (define (eval exp env)
-  (cond ((self-evaluating? exp) exp)
-        ((variable? exp) (lookup-variable-value exp env))
-        ((quoted? exp) (text-of-quotation exp))
-        ((assignment? exp) (eval-assignment exp env))
-        ((definition? exp) (eval-definition exp env))
-        ((if? exp) (eval-if exp env))
-        ((lambda? exp) (make-procedure (lambda-parameters exp)
-                                       (lambda-body exp)
-                                       env))
-        ((let? exp) (eval (let->combination exp) env))
-        ((let*? exp) (eval (let*->nested-lets exp) env))
-        ((for? exp) (eval (for->exp exp) env))
-        ((begin? exp)
-         (eval-sequence (begin-actions exp) env))
-        ((cond? exp) (eval (cond->if exp) env))
-        ((application? exp)
-         (display "INFO eval call application: ")
-         (display exp)
-         (newline)
-         (newline)
-         (ac-apply (eval (operator exp) env)
-                (list-of-values (operands exp) env)))
-        (else
-         (error "Unknown expression type: EVAL" exp))))
-
-
+  (ac-output "INFO eval exp: " exp "; type: ")
+  (define res
+    (cond ((self-evaluating? exp) (ac-output "self-evaluating\n") exp)
+          ((variable? exp) (ac-output "variable\n") (lookup-variable-value exp env))
+          ((quoted? exp) (ac-output "quoted\n") (text-of-quotation exp))
+          ((assignment? exp) (ac-output "assignment!\n") (eval-assignment exp env))
+          ((make-unbound!? exp) (eval-unbound exp env))
+          ((definition? exp) (ac-output "definition\n") (eval-definition exp env))
+          ((if? exp) (ac-output "if\n") (eval-if exp env))
+          ((and? exp) (eval-and exp env))
+          ((or? exp) (eval-or exp env))
+          ((lambda? exp) (ac-output "lambda\n") (make-procedure (lambda-parameters exp)
+                                                                (lambda-body exp)
+                                                                env))
+          ((let? exp) (ac-output "let\n") (eval (let->combination exp) env))
+          ((let*? exp) (ac-output "let*\n") (eval (let*->nested-lets exp) env))
+          ((for? exp) (ac-output "for\n") (eval (for->exp exp) env))
+          ((begin? exp) (ac-output "begin\n")
+                        (eval-sequence (begin-actions exp) env))
+          ((cond? exp) (ac-output "cond\n") (eval (cond->if exp) env))
+          ((application? exp) (ac-output "application\n")
+                              (ac-apply (eval (operator exp) env)
+                                        (list-of-values (operands exp) env)))
+          (else
+           (error "Unknown expression type: EVAL" exp))))
+  (ac-output "INFO eval exp: " exp " res: " res "\n")
+  res)
+  
+  
 ;eval sequence
 (define (eval-sequence exps env)
   (define (eval-sequence-recusion remain-exps val)
@@ -76,7 +77,7 @@
 (define (tagged-list? exp tag)
   (if (pair? exp)
       (eq? (car exp) tag)
-      false))
+      #false))
 
 ;define begin
 (define (begin? exp) (tagged-list? exp 'begin))
@@ -130,7 +131,8 @@
         (cons left right))))
 
 ;define quoted?
-(define (quoted? exp) (tagged-list? exp 'quote))
+(define (quoted? exp)
+  (tagged-list? exp 'quote))
 (define (text-of-quotation exp) (cadr exp))
 
 ;; exercise 4.4 define "and" and "or"
@@ -142,7 +144,7 @@
         (eval-and-recusion
          (rest-exps remain-exps)
          (eval (first-exp remain-exps) env))))
-  (eval-and exps 'true))
+  (eval-and-recusion (cdr exps) #t))
 
 (define (or? exp) (tagged-list? exp 'or))
 (define (eval-or exp env)
@@ -150,7 +152,7 @@
     (if (or (null? remain-exps) result)
         result
         (eval-or-recusion (rest-exps remain-exps) (eval (first-exp remain-exps) env))))
-  (eval-or-recusion exp 'false))
+  (eval-or-recusion (cdr exp) #f))
 
 ;define if
 (define (if? exp) (tagged-list? exp 'if))
@@ -191,19 +193,19 @@
       (let ((first-clause (car clauses))
             (rest-clauses (cdr clauses)))
         (cond ((cond-else-clause? first-clause)
-               (if (null? rest)
+               (if (null? rest-clauses)
                    (sequence->exp (cond-actions first-clause))
                    (error "ELSE clause isn't last: COND->IF" clauses)))
               ;; exercise 4.5
               ((cond-addition-clause? first-clause)
                (let ((predicate (cond-predicate first-clause)))
-                 (make-if (predicate)
+                 (make-if predicate
                           (list (sequence->exp (cond-actions-additional first-clause)) predicate)
-                          (expand-clauses rest))))
+                          (expand-clauses rest-clauses))))
               (else
-               (make-if (cond-predicate first)
-                        (sequence->exp (cond-actions first))
-                        (expand-clauses rest)))))))
+               (make-if (cond-predicate first-clause)
+                        (sequence->exp (cond-actions first-clause))
+                        (expand-clauses rest-clauses)))))))
 
 ;define self evaluating exp
 (define (self-evaluating? exp)
@@ -262,7 +264,7 @@
 ;                     (let-body exp))
 ;    (let-variables->argument (let-variables exp))))
 (define (make-let variables body)
-  (list 'let variables body))
+  (list 'let  variables body))
 ;; exercise 4.7 let*
 (define (let*? exp)
   (tagged-list? exp 'let*))
@@ -272,7 +274,7 @@
       (make-let (list (car variables))
                 (expand-let* (cdr variables) body))))
 (define (let*->nested-lets exp)
-  (expand-let* (let-variables exp) (let-body exp)))
+  (expand-let* (let-variables exp) (sequence->exp (let-body exp))))
 ;; exercise 4.8
 (define (make-function function-name function-parameters body)
   (list 'define (cons function-name function-parameters) body))
@@ -287,7 +289,7 @@
        (list (make-function
               (named-let-name exp)
               (let-variables->parameters (named-let-variables exp))
-              (named-let-body exp))
+              (sequence->exp (named-let-body exp)))
              (cons
               (named-let-name exp)
               (let-variables->arguments (named-let-variables exp)))))
@@ -441,7 +443,7 @@
     (definition-variable exp)
     (eval (definition-value exp) env)
     env)
-  'ok)
+  'add-definition-ok)
 
 ;define unbound e4.13 only find in local env
 (define (make-unbound!? exp)
@@ -467,7 +469,6 @@
   (unbound-variable! (make-unbound!-variable exp) env))
 
 
-
 ;define primitive-procedure
 (define (primitive-procedure? proc)
   (tagged-list? proc 'primitive))
@@ -477,7 +478,13 @@
         (list 'cdr cdr)
         (list 'cons cons)
         (list 'list list)
-        (list 'null? null?)))
+        (list 'null? null?)
+        (list 'display display)
+        (list '+ +)
+        (list '* *)
+        (list '- -)
+        (list '/ /)
+        (list '= =)))
 (define (primitive-procedure-names)
   (map car primitive-procedures))
 (define (primitive-procedure-objects)
@@ -521,10 +528,87 @@
                      '<procedure-env>))
       (display object)))
 
+(define (run exp)
+  (eval exp the-global-environment))
+
+;test
+;;test define fun, call fun, if, quate list 
 (eval '(define (append x y)
          (if (null? x)
              y
              (cons (car x) (append (cdr x) y)))) the-global-environment)
-(eval '(append (list 1 2 3) (list 4 5 6)) the-global-environment)
+
+(define res (run '(append '(a b c) '(d e f))))
+(if (equal? res '(a b c d e f))
+    (ac-output "test define ok\n")
+    (error "test define error\n"))
+
+;;test quote
+(if (eq? (run ''a) 'a)
+    (ac-output "test quote ok\n")
+    (error "test quote error\n"))
+
+;;test define variable and begin
+(if (equal? (run '(begin (define x 1) x)) 1)
+    (ac-output "test define and begin ok\n")
+    (error "test define and begin error\n"))
+
+;;test cond and let
+(if (and (equal? (run '(let ((a 1))
+                         (cond ((= a 0) 'a)
+                               ((= 1 a) (+ a 1))
+                               (else 'else)))) 2)
+         (equal? (run '(let ((a 10))
+                         (cond ((= a 0) 'a)
+                               ((= 1 a) (+ a 1))
+                               (else a)))) 10)
+         (equal? (run '(let ((a 10))
+                         (cond ((= a 0) 'a)
+                               ((+ 10 1) => (lambda (a) (* a 2)))
+                               (else a)))) 22))
+    (ac-output "test let and cond ok\n")
+    (error "test let and cond error\n"))
+
+;;test and or
+(if (and (equal? 1 (run '(and 3 2 1)))
+         (equal? (run '(and 3 false 1)) #f)
+         (equal? (run '(and true)) #t)
+         (equal? (run '(and false)) #f)
+         (equal? (run '(or 1 false false)) 1)
+         (equal? (run '(or false)) #f)
+         (equal? (run '(or 1)) 1)
+         (equal? (run '(or false false false)) #f)
+         (equal? (run '(or false false 10)) 10))
+    (ac-output "test and or ok")
+    (error "test and or error"))
+
+;;test let*
+(if (equal? 3 (run '(let* ((a 1) (b (+ a 2))) b)))
+    (ac-output "test let* ok")
+    (error "test let* error"))
+
+;;test named let*
+(if (equal? 55 (run '(let add ((a 10))
+                       (if (= a 0)
+                           0
+                           (+ a (add (- a 1)))))))
+    (ac-output "test named let ok")
+    (error "test named let error"))
+
+;;test set!
+(if (equal? 4 (run '(begin (define a 10) (set! a 4) a)))
+    (ac-output "test set! ok")
+    (error "test set!" error))
+
+;;test for
+(if (equal? 'ok (run '(for ((a (list 1 2 3 10)) (b (list 1 2 3 10)))
+                       (display (+ a b))
+                       (+ a b))))
+    (ac-output "test for ok")
+    (error "test for error"))
+
+;;test unbound
+;(run '(begin (define a 10) (make-unbound! a) a))
+
 ;run
 ;(driver-loop)
