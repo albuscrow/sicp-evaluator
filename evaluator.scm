@@ -49,6 +49,7 @@
                                                                 env))
           ((let? exp) (ac-output "let\n") (eval (let->combination exp) env))
           ((let*? exp) (ac-output "let*\n") (eval (let*->nested-lets exp) env))
+          ((letrec? exp) (ac-output "letrec\n") (eval (letrec->nested-lets exp) env))
           ((for? exp) (ac-output "for\n") (eval (for->exp exp) env))
           ((begin? exp) (ac-output "begin\n")
                         (eval-sequence (begin-actions exp) env))
@@ -60,6 +61,8 @@
            (error "Unknown expression type: EVAL" exp))))
   (ac-output "INFO eval exp: " exp " res: " res "\n")
   res)
+
+
   
   
 ;eval sequence
@@ -264,17 +267,32 @@
 ;                     (let-body exp))
 ;    (let-variables->argument (let-variables exp))))
 (define (make-let variables body)
-  (list 'let  variables body))
+  (cons 'let (cons variables body)))
 ;; exercise 4.7 let*
 (define (let*? exp)
   (tagged-list? exp 'let*))
 (define (expand-let* variables body)
   (if (null? variables)
       body
-      (make-let (list (car variables))
-                (expand-let* (cdr variables) body))))
+      (list (make-let (list (car variables))
+                (expand-let* (cdr variables) body)))))
 (define (let*->nested-lets exp)
-  (expand-let* (let-variables exp) (sequence->exp (let-body exp))))
+  (car (expand-let* (let-variables exp) (let-body exp))))
+
+
+;;define letrec
+(define (letrec? exp)
+  (tagged-list? exp 'letrec))
+(define (letrec->nested-lets exp)
+  (define (expand-letrec variables body)
+    (make-let
+     (map (lambda (variable) (list (car variable) ''*unassigned*)) variables)
+     (append
+      (map (lambda (variable) (cons 'set! variable)) variables)
+      body)))
+  (expand-letrec (let-variables exp) (let-body exp)))
+
+
 ;; exercise 4.8
 (define (make-function function-name function-parameters body)
   (list 'define (cons function-name function-parameters) body))
@@ -326,8 +344,49 @@
 (define (false? x) (eq? x false))
 
 ;define procedure
+;;e4.16
+(define (split-body exps)
+  (if (null? exps)
+      (cons '() '())
+      (let* ((rest (split-body (cdr exps)))
+             (defines (car rest))
+             (body (cdr rest))
+             (exp (car exps)))
+        (if (definition? exp)
+            (cons (cons exp defines) body)
+            (cons defines (cons exp body))))))
+
+(define (scan-out-defines body)
+  (let* ((splited-body (split-body body))
+         (defines (car splited-body))
+         (new-body (cdr splited-body)))
+    (append defines new-body)))
+  
+
+(define (scan-out-defines-4.16 body)
+  (let* ((splited-body (split-body body))
+         (defines (car splited-body))
+         (new-body (cdr splited-body)))
+    (if (null? defines)
+        body
+        (list (make-let
+         (map
+          (lambda (definition)
+            (list
+             (definition-variable definition)
+             ''*unassigned*))
+          defines)
+         (append
+          (map
+           (lambda (definition)
+             (list
+              'set!
+              (definition-variable definition)
+              (definition-value definition)))
+           defines)
+          new-body))))))
 (define (make-procedure parameters body env)
-  (list 'procedure parameters body env))
+  (list 'procedure parameters (scan-out-defines body) env))
 (define (compound-procedure? p)
   (tagged-list? p 'procedure))
 (define (procedure-parameters p) (cadr p))
@@ -411,11 +470,16 @@
      (add-binding-to-frame!
       var val (first-frame env)))))
 
+;;modified by e4.16
 (define (lookup-variable-value var env)
-  (traversing-variables
-   env var
-   (lambda (pairs) (value (first-pair pairs)))
-   (lambda (env) (error "Unbound variable" var))))
+  (let ((val
+         (traversing-variables
+          env var
+          (lambda (pairs) (value (first-pair pairs)))
+          (lambda (env) (error "Unbound variable" var)))))
+    (if (eq? val '*unassigned*)
+        (error "unassigned" var)
+        val)))
 
 
 ;define assignment
@@ -607,8 +671,42 @@
     (ac-output "test for ok")
     (error "test for error"))
 
+;;test map e4.14
+(run '(define (map fun list)
+        (if (null? list)
+            '()
+            (cons (fun (car list)) (map fun (cdr list))))))
+(run '(map (lambda (x) (+ x x)) '(1 2 3)))
+
+(run '(define (factorial n)
+        (if (= n 1) 1  (* n (factorial (- n 1))))))
+(run '(factorial 6))
+
+
 ;;test unbound
 ;(run '(begin (define a 10) (make-unbound! a) a))
+
+(run '(define (test input)
+        (if (even? input)
+            (+ a b)
+            (* a b))
+        (define (even? n) (if (= n 0) true (odd? (- n 1))))
+        (define (odd? n) (if (= n 0) false (even? (- n 1))))
+        (define a 10)
+        (define b 20)))
+
+(if (and (equal? 200 (run '(test 21))) (equal? 30 (run '(test 20))))
+    (ac-output "test internal define ok")
+    (error "test internal define error"))
+    
+;;test letrec
+(if (equal? 120 (run '(letrec
+                          ((fact (lambda (n)
+                                   (if (= n 1) 1 (* n (fact (- n 1)))))))
+                        (fact 5))))
+    (ac-output "test letrec ok")
+    (error "test letrec error"))
+
 
 ;run
 ;(driver-loop)
