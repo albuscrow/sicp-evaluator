@@ -32,7 +32,23 @@
         (else
          (error "Unknown procedure type: APPLY" procedure))))
 
-(define (eval exp env)
+(define (ac-eval exp env)
+  ((analyze exp) env))
+
+(define (analyze exp)
+  (cond ((self-evaluating? exp) (analyze-self-evaluating exp))
+        ((quoted? exp) (analyze-quoted exp))
+        ((variable? exp) (analyze-variable exp))
+        ((assignment? exp) (analyze-assignment exp))
+        ((definition? exp) (analyze-definition exp))
+        ((if? exp) (analyze-if exp))
+        ((lambda? exp) (analyze-lambda exp))
+        ((begin? exp) (analyze-sequence (begin-actions exp)))
+        ((cond? exp) (analyze (cond->if exp)))
+        ((application? exp) (analyze-application exp))
+        (else (error "Unknow expression type: ANALYZE" exp))))
+
+(define (eval-before4.1.7 exp env)
   (ac-output "INFO eval exp: " exp "; type: ")
   (define res
     (cond ((self-evaluating? exp) (ac-output "self-evaluating\n") exp)
@@ -47,15 +63,15 @@
           ((lambda? exp) (ac-output "lambda\n") (make-procedure (lambda-parameters exp)
                                                                 (lambda-body exp)
                                                                 env))
-          ((let? exp) (ac-output "let\n") (eval (let->combination exp) env))
-          ((let*? exp) (ac-output "let*\n") (eval (let*->nested-lets exp) env))
-          ((letrec? exp) (ac-output "letrec\n") (eval (letrec->nested-lets exp) env))
-          ((for? exp) (ac-output "for\n") (eval (for->exp exp) env))
+          ((let? exp) (ac-output "let\n") (eval-before4.1.7 (let->combination exp) env))
+          ((let*? exp) (ac-output "let*\n") (eval-before4.1.7 (let*->nested-lets exp) env))
+          ((letrec? exp) (ac-output "letrec\n") (eval-before4.1.7 (letrec->nested-lets exp) env))
+          ((for? exp) (ac-output "for\n") (eval-before4.1.7 (for->exp exp) env))
           ((begin? exp) (ac-output "begin\n")
                         (eval-sequence (begin-actions exp) env))
-          ((cond? exp) (ac-output "cond\n") (eval (cond->if exp) env))
+          ((cond? exp) (ac-output "cond\n") (eval-before4.1.7 (cond->if exp) env))
           ((application? exp) (ac-output "application\n")
-                              (ac-apply (eval (operator exp) env)
+                              (ac-apply (eval-before4.1.7 (operator exp) env)
                                         (list-of-values (operands exp) env)))
           (else
            (error "Unknown expression type: EVAL" exp))))
@@ -72,7 +88,7 @@
         val
         (eval-sequence-recusion
          (rest-exps remain-exps)
-         (eval (first-exp remain-exps) env))))
+         (ac-eval (first-exp remain-exps) env))))
   (eval-sequence-recusion exps '()))
 
 
@@ -117,20 +133,20 @@
   (newline)
   (newline)
   (map (lambda (operand)
-         (eval operand env))
+         (ac-eval operand env))
        operands))
 ;; exercise 4.1
 (define (list-of-value-lr exps env)
   (if (no-operands? exps)
       '()
-      (let ((left (eval (first-operand exps) env))
+      (let ((left (ac-eval (first-operand exps) env))
             (right (list-of-values (rest-operands exps) env)))
         (cons left right))))
 (define (list-of-value-rl exps env)
   (if (no-operands? exps)
       '()
       (let ((right (list-of-values (rest-operands exps) env))
-            (left (eval (first-operand exps) env)))
+            (left (ac-eval (first-operand exps) env)))
         (cons left right))))
 
 ;define quoted?
@@ -146,7 +162,7 @@
         result
         (eval-and-recusion
          (rest-exps remain-exps)
-         (eval (first-exp remain-exps) env))))
+         (ac-eval (first-exp remain-exps) env))))
   (eval-and-recusion (cdr exps) #t))
 
 (define (or? exp) (tagged-list? exp 'or))
@@ -154,7 +170,7 @@
   (define (eval-or-recusion remain-exps result)
     (if (or (null? remain-exps) result)
         result
-        (eval-or-recusion (rest-exps remain-exps) (eval (first-exp remain-exps) env))))
+        (eval-or-recusion (rest-exps remain-exps) (ac-eval (first-exp remain-exps) env))))
   (eval-or-recusion (cdr exp) #f))
 
 ;define if
@@ -169,9 +185,9 @@
 (define (make-if predicate consequent alternative)
   (list 'if predicate consequent alternative))
 (define (eval-if exp env)
-  (if (true? (eval (if-predicate exp) env))
-      (eval (if-consequent exp) env)
-      (eval (if-alternative exp) env)))
+  (if (true? (ac-eval (if-predicate exp) env))
+      (ac-eval (if-consequent exp) env)
+      (ac-eval (if-alternative exp) env)))
 
 ;define cond by expanding it to if expression
 ;;for cond
@@ -488,7 +504,7 @@
 (define (assignment-value exp) (caddr exp))
 (define (eval-assignment exp env)
   (set-variable-value! (assignment-variable exp)
-                       (eval (assignment-value exp) env)
+                       (ac-eval (assignment-value exp) env)
                        env)
   'ok)
 
@@ -505,7 +521,7 @@
 (define (eval-definition exp env)
   (define-variable!
     (definition-variable exp)
-    (eval (definition-value exp) env)
+    (ac-eval (definition-value exp) env)
     env)
   'add-definition-ok)
 
@@ -574,7 +590,7 @@
 (define (driver-loop)
   (prompt-for-input input-prompt)
   (let ((input (read)))
-    (let ((output (eval input the-global-environment)))
+    (let ((output (ac-eval input the-global-environment)))
       (announce-output output-prompt)
       (user-print output)))
   (driver-loop))
@@ -593,11 +609,11 @@
       (display object)))
 
 (define (run exp)
-  (eval exp the-global-environment))
+  (ac-eval exp the-global-environment))
 
 ;test
 ;;test define fun, call fun, if, quate list 
-(eval '(define (append x y)
+(ac-eval '(define (append x y)
          (if (null? x)
              y
              (cons (car x) (append (cdr x) y)))) the-global-environment)
