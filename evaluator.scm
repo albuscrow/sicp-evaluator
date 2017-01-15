@@ -25,7 +25,7 @@
          (eval-sequence
           (procedure-body procedure)
           (extend-environment
-           (procedure-parameters procedure)
+           (procedure-pa nmbrameters procedure)
            arguments
            (procedure-environment procedure))))
         (else
@@ -35,7 +35,7 @@
   (cond ((primitive-procedure? procedure)
          (apply-primitive-procedure
           procedure
-          (list-of-arg-values arguments)))
+          (list-of-arg-values arguments env)))
         ((compound-procedure? procedure)
          (eval-sequence
           (procedure-body procedure)
@@ -64,8 +64,12 @@
 
 (define (delay-it exp env)
   (mlist 'thunk exp env))
+
 (define (thunk? obj)
-  (eq? (mcar obj) 'thunk))
+  (if (mpair? obj)
+      (eq? (mcar obj) 'thunk)
+      #f))
+
 (define (thunk-exp exp)
   (mcar (mcdr exp)))
 (define (thunk-env exp)
@@ -74,12 +78,14 @@
   (let ((result (actual-value (thunk-exp thunk)
                               (thunk-env thunk))))
     (set-mcar! thunk 'evaluated-thunk)
-    (set-mcar!(mcdr thunk) 'result)
+    (set-mcar!(mcdr thunk) result)
     (set-mcar! (mcdr (mcdr thunk)) '())
     result))
 
 (define (evaluated-thunk? obj)
-  (eq? 'evaluated-thunk (mcar obj)))
+  (if (mpair? obj)
+      (eq? 'evaluated-thunk (mcar obj))
+      #f))
 
 (define (thunk-value evaluated-thunk)
   (mcar (mcdr evaluated-thunk)))
@@ -414,7 +420,8 @@
 
 ;define lambda
 (define (lambda? exp) (tagged-list? exp 'lambda))
-(define (lambda-parameters exp) (cadr exp))
+(define (lambda-parameters exp)
+  (map (lambda (var) (if (pair? var) var (cons var '(normal)))) (cadr exp)))
 (define (lambda-body exp) (cddr exp))
 (define (make-lambda parameters body)
   (cons 'lambda (cons parameters (scan-out-defines body))))
@@ -562,7 +569,16 @@
   (list 'procedure parameters body env))
 (define (compound-procedure? p)
   (tagged-list? p 'procedure))
-(define (procedure-parameters p) (cadr p))
+  
+(define (procedure-parameters p)
+  (map (lambda (var) (car var)) (cadr p)))
+
+(define (procedure-parameters-with-usage p)
+  (cadr p))
+
+(define (procedure-parameters-usage p)
+  (map (lambda (var) (cadr var)) (cadr p)))
+
 (define (procedure-body p) (caddr p))
 (define (procedure-environment p) (cadddr p))
 
@@ -914,6 +930,30 @@
     (ac-output "test unless ok")
     (error "test unless error!"))
 
+;;e4.27 test lazy
+(run '(define count 0))
+(run '(define (id x) (set! count (+ count 1)) x))
+(run '(define w (id (id 10))))
+(run 'count)
+(run 'w)
+(run 'count)
 
+;;e4.29
+(run '(define (square x) (* x x)))
+(run '(square (id 10)))
+(run 'count)
+
+;;e4.30
+
+(run '(define (p1 x)
+        (set! x (cons x '(2)))
+        x))
+(run '(define (p2 x)
+        (define (p e)
+          e
+          x)
+        (p (set! x (cons x '(2))))))
+(run '(p1 1))
+(run '(p2 1))
 ;run
 ;(driver-loop)
