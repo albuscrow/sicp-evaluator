@@ -45,8 +45,15 @@
         ((lambda? exp) (analyze-lambda exp))
         ((begin? exp) (analyze-sequence (begin-actions exp)))
         ((cond? exp) (analyze (cond->if exp)))
+        ((let? exp) (analyze (let->combination exp)))
+        ((let*? exp) (analyze (let*->nested-lets exp)))
+        ((letrec? exp) (analyze (letrec->nested-lets exp)))
+        ((for? exp) (analyze (for->exp exp)))
+        ((and? exp) (analyze-and exp))
+        ((or? exp) (analyze-or exp))
         ((application? exp) (analyze-application exp))
         (else (error "Unknow expression type: ANALYZE" exp))))
+
 
 (define (eval-before4.1.7 exp env)
   (ac-output "INFO eval exp: " exp "; type: ")
@@ -65,7 +72,7 @@
                                                                 env))
           ((let? exp) (ac-output "let\n") (eval-before4.1.7 (let->combination exp) env))
           ((let*? exp) (ac-output "let*\n") (eval-before4.1.7 (let*->nested-lets exp) env))
-          ((letrec? exp) (ac-output "letrec\n") (eval-before4.1.7 (letrec->nested-lets exp) env))
+          ((letrec? exp) (ac-output "letrec\n") (eval-before4.1.7  env))
           ((for? exp) (ac-output "for\n") (eval-before4.1.7 (for->exp exp) env))
           ((begin? exp) (ac-output "begin\n")
                         (eval-sequence (begin-actions exp) env))
@@ -90,6 +97,18 @@
          (rest-exps remain-exps)
          (ac-eval (first-exp remain-exps) env))))
   (eval-sequence-recusion exps '()))
+
+(define (analyze-sequence exps)
+  (define (sequentially proc1 proc2)
+    (lambda (env) (proc1 env) (proc2 env)))
+  (define (loop first-proc rest-procs)
+    (if (null? rest-procs)
+        first-proc
+        (loop (sequentially first-proc (car rest-procs))
+              (cdr rest-procs))))
+  (let ((procs (map analyze exps)))
+    (if (null? procs) (error "Empty sequence: ANALYZE")
+        (loop (car procs) (cdr procs)))))
 
 
 ;some util
@@ -118,6 +137,27 @@
 (define (application? exp) (pair? exp))
 (define (operator exp) (car exp))
 (define (operands exp) (cdr exp))
+(define (analyze-application exp)
+  (let ((fproc (analyze (operator exp)))
+        (aprocs (map analyze (operands exp))))
+    (lambda (env)
+      (execute-application
+       (fproc env)
+       (map (lambda (aproc) (aproc env))
+            aprocs)))))
+
+(define (execute-application proc args)
+  (cond ((primitive-procedure? proc)
+         (apply-primitive-procedure proc args))
+        ((compound-procedure? proc)
+         ((procedure-body proc)
+          (extend-environment
+           (procedure-parameters proc)
+           args
+           (procedure-environment proc))))
+        (else
+         (error "Unknown procedure type: EXECUTE-APPLICATION" proc))))
+                                  
 ;; exercise 4.2
 (define (application?-4.2 exp) (tagged-list? exp 'call))
 (define (operator-4.2 exp) (cadr exp))
@@ -153,6 +193,9 @@
 (define (quoted? exp)
   (tagged-list? exp 'quote))
 (define (text-of-quotation exp) (cadr exp))
+(define (analyze-quoted exp)
+  (let ((qval (text-of-quotation exp)))
+    (lambda (env) qval)))
 
 ;; exercise 4.4 define "and" and "or"
 (define (and? exp) (tagged-list? exp 'and))
@@ -165,6 +208,21 @@
          (ac-eval (first-exp remain-exps) env))))
   (eval-and-recusion (cdr exps) #t))
 
+(define (analyze-and exp)
+  (define (sequentially proc1 proc2)
+    (lambda (env)
+      (if (proc1 env)
+          (proc2 env)
+          'false)))
+  (let ((procs (map analyze (cdr exp))))
+    (define (loop procs)
+      (if (null? procs)
+          (lambda (env) 'true)
+          (sequentially (car procs) (loop (cdr procs))))) 
+    (loop procs)))
+        
+        
+
 (define (or? exp) (tagged-list? exp 'or))
 (define (eval-or exp env)
   (define (eval-or-recusion remain-exps result)
@@ -173,8 +231,22 @@
         (eval-or-recusion (rest-exps remain-exps) (ac-eval (first-exp remain-exps) env))))
   (eval-or-recusion (cdr exp) #f))
 
+(define (analyze-or exp)
+  (define (sequentially proc1 proc2)
+    (lambda (env)
+      (if (proc1 env)
+          'true
+          (proc2 env))))
+  (let ((procs (map analyze (cdr exp))))
+    (define (loop procs)
+      (if (null? procs)
+          (lambda (env) 'false)
+          (sequentially (car procs) (loop (cdr procs)))))
+    (loop procs)))
+
 ;define if
-(define (if? exp) (tagged-list? exp 'if))
+
+      (define (if? exp) (tagged-list? exp 'if))
 (define (if-predicate exp) (cadr exp))
 (define (if-consequent exp) (caddr exp))
 (define (if-alternative exp)
@@ -188,6 +260,16 @@
   (if (true? (ac-eval (if-predicate exp) env))
       (ac-eval (if-consequent exp) env)
       (ac-eval (if-alternative exp) env)))
+
+(define (analyze-if exp)
+  (let ((pproc (analyze (if-predicate exp)))
+        (cproc (analyze (if-consequent exp)))
+        (aproc (analyze (if-alternative exp))))
+    (lambda (env) (if (true? (pproc env))
+                      (cproc env)
+                      (aproc env)))))
+
+
 
 ;define cond by expanding it to if expression
 ;;for cond
@@ -231,9 +313,13 @@
   (cond ((number? exp) true)
         ((string? exp) true)
         (else false)))
+(define (analyze-self-evaluating exp)
+  (lambda (env) exp))
 
 ;define variable
 (define variable? symbol?)
+(define (analyze-variable exp)
+  (lambda (env) (lookup-variable-value exp env)))
 
 ;define lambda
 (define (lambda? exp) (tagged-list? exp 'lambda))
@@ -241,6 +327,11 @@
 (define (lambda-body exp) (cddr exp))
 (define (make-lambda parameters body)
   (cons 'lambda (cons parameters body)))
+
+(define (analyze-lambda exp)
+  (let ((vars (lambda-parameters exp))
+        (bproc (analyze-sequence (scan-out-defines (lambda-body exp)))))
+    (lambda (env) (make-procedure vars bproc env))))
 
 ;; exercise 4.3
 ;(require "data-direct.scm")
@@ -402,7 +493,7 @@
            defines)
           new-body))))))
 (define (make-procedure parameters body env)
-  (list 'procedure parameters (scan-out-defines body) env))
+  (list 'procedure parameters body env))
 (define (compound-procedure? p)
   (tagged-list? p 'procedure))
 (define (procedure-parameters p) (cadr p))
@@ -508,6 +599,13 @@
                        env)
   'ok)
 
+(define (analyze-assignment exp)
+  (let ((var (assignment-variable exp))
+        (vproc (analyze (assignment-value exp))))
+    (lambda (env)
+      (set-variable-value! var (vproc env) env)
+      'assignment-ok)))
+
 ;define definition
 (define (definition? exp) (tagged-list? exp 'define))
 (define (definition-variable exp)
@@ -524,6 +622,13 @@
     (ac-eval (definition-value exp) env)
     env)
   'add-definition-ok)
+
+(define (analyze-definition exp)
+  (let ((var (definition-variable exp))
+        (vproc (analyze (definition-value exp))))
+    (lambda (env)
+      (define-variable! var (vproc env) env)
+      'ok)))
 
 ;define unbound e4.13 only find in local env
 (define (make-unbound!? exp)
@@ -649,16 +754,17 @@
     (ac-output "test let and cond ok\n")
     (error "test let and cond error\n"))
 
-;;test and or
-(if (and (equal? 1 (run '(and 3 2 1)))
-         (equal? (run '(and 3 false 1)) #f)
-         (equal? (run '(and true)) #t)
-         (equal? (run '(and false)) #f)
-         (equal? (run '(or 1 false false)) 1)
-         (equal? (run '(or false)) #f)
-         (equal? (run '(or 1)) 1)
-         (equal? (run '(or false false false)) #f)
-         (equal? (run '(or false false 10)) 10))
+;test and or
+(if (and (equal? 'true (run '(and 3 2 1)))
+         (equal? (run '(and 3 false 1)) 'false)
+         (equal? (run '(and true)) 'true)
+         (equal? (run '(and false)) 'false)
+         (equal? (run '(or 1 false false)) 'true)
+         (equal? (run '(or false)) 'false)
+         (equal? (run '(or 1)) 'true)
+         (equal? (run '(or false false false)) 'false)
+         (equal? (run '(or false false 10)) 'true)
+         )
     (ac-output "test and or ok")
     (error "test and or error"))
 
