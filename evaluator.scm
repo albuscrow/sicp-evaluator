@@ -428,7 +428,7 @@
 ;define lambda
 (define (lambda? exp) (tagged-list? exp 'lambda))
 (define (lambda-parameters exp)
-  (map (lambda (var) (if (pair? var) var (cons var '(normal)))) (cadr exp)))
+  (map (lambda (var) (if (pair? var) var (cons var '(lazy-memo)))) (cadr exp)))
 (define (lambda-body exp) (cddr exp))
 (define (make-lambda parameters body)
   (cons 'lambda (cons parameters (scan-out-defines body))))
@@ -962,5 +962,34 @@
         (p (set! x (cons x '(2))))))
 (run '(p1 1))
 (run '(p2 1))
+
+
+;begin stream
+(define (run-sequence exps)
+  (if (null? exps)
+      'ok
+      (begin
+        (display (run (car exps)))
+        (newline)
+        (run-sequence (cdr exps)))))
+(run-sequence '((define (cons x y) (lambda (m) (m x y)))
+                (define (car z) (z (lambda (p q) p)))
+                (define (cdr z) (z (lambda (p q) q)))
+                (define (list-ref items n)
+                  (if (= n 0)
+                      (car items)
+                      (list-ref (cdr items) (- n 1))))
+                (define (map proc items)
+                  (if (null? items)
+                      '()
+                      (cons (proc (car items)) (map proc (cdr items)))))
+                (define (add-lists list1 list2)
+                  (cond ((null? list1) list2)
+                        ((null? list2) list1)
+                        (else (cons (+ (car list1) (car list2))
+                                    (add-lists (cdr list1) (cdr list2))))))
+                (define ones (cons 1 ones))
+                (define integers (cons 1 (add-lists ones integers)))
+                (list-ref integers 17)))
 ;run
 ;(driver-loop)
