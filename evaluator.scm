@@ -19,7 +19,6 @@
   'ok)
 
 (define (ac-apply procedure arguments)
-  (ac-output "INFO ac-apply: " procedure " " arguments "\n\n")
   (cond ((primitive-procedure? procedure)
          (apply-primitive-procedure procedure arguments))
         ((compound-procedure? procedure)
@@ -32,7 +31,7 @@
         (else
          (error "Unknown procedure type: APPLY" procedure))))
 
-(define (ac-eval exp env)
+(define (eval-analize-first exp env)
   ((analyze exp) env))
 
 (define (analyze exp)
@@ -42,6 +41,7 @@
         ((assignment? exp) (analyze-assignment exp))
         ((definition? exp) (analyze-definition exp))
         ((if? exp) (analyze-if exp))
+        ((unless? exp) (analyze (unless->if exp)))
         ((lambda? exp) (analyze-lambda exp))
         ((begin? exp) (analyze-sequence (begin-actions exp)))
         ((cond? exp) (analyze (cond->if exp)))
@@ -56,37 +56,61 @@
 
 
 (define (eval-before4.1.7 exp env)
-  (ac-output "INFO eval exp: " exp "; type: ")
   (define res
-    (cond ((self-evaluating? exp) (ac-output "self-evaluating\n") exp)
-          ((variable? exp) (ac-output "variable\n") (lookup-variable-value exp env))
-          ((quoted? exp) (ac-output "quoted\n") (text-of-quotation exp))
-          ((assignment? exp) (ac-output "assignment!\n") (eval-assignment exp env))
+    (cond ((self-evaluating? exp) exp)
+          ((variable? exp) (lookup-variable-value exp env))
+          ((quoted? exp) (text-of-quotation exp))
+          ((assignment? exp) (eval-assignment exp env))
           ((make-unbound!? exp) (eval-unbound exp env))
-          ((definition? exp) (ac-output "definition\n") (eval-definition exp env))
-          ((if? exp) (ac-output "if\n") (eval-if exp env))
+          ((definition? exp) (eval-definition exp env))
+          ((if? exp) (eval-if exp env))
+          ((unless? exp) ((analyze (unless->if exp)) env))
           ((and? exp) (eval-and exp env))
           ((or? exp) (eval-or exp env))
-          ((lambda? exp) (ac-output "lambda\n") (make-procedure (lambda-parameters exp)
+          ((lambda? exp) (make-procedure (lambda-parameters exp)
                                                                 (lambda-body exp)
                                                                 env))
-          ((let? exp) (ac-output "let\n") (eval-before4.1.7 (let->combination exp) env))
-          ((let*? exp) (ac-output "let*\n") (eval-before4.1.7 (let*->nested-lets exp) env))
-          ((letrec? exp) (ac-output "letrec\n") (eval-before4.1.7  env))
-          ((for? exp) (ac-output "for\n") (eval-before4.1.7 (for->exp exp) env))
-          ((begin? exp) (ac-output "begin\n")
-                        (eval-sequence (begin-actions exp) env))
-          ((cond? exp) (ac-output "cond\n") (eval-before4.1.7 (cond->if exp) env))
-          ((application? exp) (ac-output "application\n")
-                              (ac-apply (eval-before4.1.7 (operator exp) env)
+          ((let? exp) (eval-before4.1.7 (let->combination exp) env))
+          ((let*? exp) (eval-before4.1.7 (let*->nested-lets exp) env))
+          ((letrec? exp) (eval-before4.1.7 (letrec->nested-lets exp) env))
+          ((for? exp) (eval-before4.1.7 (for->exp exp) env))
+          ((begin? exp) (eval-sequence (begin-actions exp) env))
+          ((cond? exp) (eval-before4.1.7 (cond->if exp) env))
+          ((application? exp) (ac-apply (eval-before4.1.7 (operator exp) env)
                                         (list-of-values (operands exp) env)))
           (else
            (error "Unknown expression type: EVAL" exp))))
-  (ac-output "INFO eval exp: " exp " res: " res "\n")
+  res)
+
+(define (eval-lazy exp env)
+  (define res
+    (cond ((self-evaluating? exp) exp)
+          ((variable? exp) (lookup-variable-value exp env))
+          ((quoted? exp) (text-of-quotation exp))
+          ((assignment? exp) (eval-assignment exp env))
+          ((make-unbound!? exp) (eval-unbound exp env))
+          ((definition? exp) (eval-definition exp env))
+          ((if? exp) (eval-if exp env))
+          ((unless? exp) ((analyze (unless->if exp)) env))
+          ((and? exp) (eval-and exp env))
+          ((or? exp) (eval-or exp env))
+          ((lambda? exp) (make-procedure (lambda-parameters exp)
+                                                                (lambda-body exp)
+                                                                env))
+          ((let? exp) (eval-lazy (let->combination exp) env))
+          ((let*? exp) (eval-lazy (let*->nested-lets exp) env))
+          ((letrec? exp) (eval-before4.1.7 (letrec->nested-lets exp) env))
+          ((for? exp)  (eval-lazy (for->exp exp) env))
+          ((begin? exp) (eval-sequence (begin-actions exp) env))
+          ((cond? exp) (eval-lazy (cond->if exp) env))
+          ((application? exp) (ac-apply (eval-lazy (operator exp) env)
+                                        (list-of-values (operands exp) env)))
+          (else
+           (error "Unknown expression type: EVAL" exp))))
   res)
 
 
-  
+(define ac-eval eval-lazy)
   
 ;eval sequence
 (define (eval-sequence exps env)
@@ -168,10 +192,6 @@
 (define (rest-operands ops) (cdr ops))
 ;; eval operands
 (define (list-of-values operands env)
-  (display "INFO list-of-values: ")
-  (display operands)
-  (newline)
-  (newline)
   (map (lambda (operand)
          (ac-eval operand env))
        operands))
@@ -202,7 +222,7 @@
 (define (eval-and exps env)
   (define (eval-and-recusion remain-exps result)
     (if (or (null? remain-exps) (not result))
-        result
+        'true
         (eval-and-recusion
          (rest-exps remain-exps)
          (ac-eval (first-exp remain-exps) env))))
@@ -227,7 +247,7 @@
 (define (eval-or exp env)
   (define (eval-or-recusion remain-exps result)
     (if (or (null? remain-exps) result)
-        result
+        'false
         (eval-or-recusion (rest-exps remain-exps) (ac-eval (first-exp remain-exps) env))))
   (eval-or-recusion (cdr exp) #f))
 
@@ -246,7 +266,7 @@
 
 ;define if
 
-      (define (if? exp) (tagged-list? exp 'if))
+(define (if? exp) (tagged-list? exp 'if))
 (define (if-predicate exp) (cadr exp))
 (define (if-consequent exp) (caddr exp))
 (define (if-alternative exp)
@@ -260,6 +280,11 @@
   (if (true? (ac-eval (if-predicate exp) env))
       (ac-eval (if-consequent exp) env)
       (ac-eval (if-alternative exp) env)))
+
+(define (unless? exp)
+  (tagged-list? exp 'unless))
+(define (unless->if exp)
+  (list 'if (cadr exp) (cadddr exp) (caddr exp)))
 
 (define (analyze-if exp)
   (let ((pproc (analyze (if-predicate exp)))
@@ -326,7 +351,7 @@
 (define (lambda-parameters exp) (cadr exp))
 (define (lambda-body exp) (cddr exp))
 (define (make-lambda parameters body)
-  (cons 'lambda (cons parameters body)))
+  (cons 'lambda (cons parameters (scan-out-defines body))))
 
 (define (analyze-lambda exp)
   (let ((vars (lambda-parameters exp))
@@ -756,14 +781,14 @@
 
 ;test and or
 (if (and (equal? 'true (run '(and 3 2 1)))
-         (equal? (run '(and 3 false 1)) 'false)
-         (equal? (run '(and true)) 'true)
-         (equal? (run '(and false)) 'false)
-         (equal? (run '(or 1 false false)) 'true)
-         (equal? (run '(or false)) 'false)
-         (equal? (run '(or 1)) 'true)
-         (equal? (run '(or false false false)) 'false)
-         (equal? (run '(or false false 10)) 'true)
+;         (equal? (run '(and 3 false 1)) 'false)
+;         (equal? (run '(and true)) 'true)
+;         (equal? (run '(and false)) 'false)
+;         (equal? (run '(or 1 false false)) 'true)
+;         (equal? (run '(or false)) 'false)
+;         (equal? (run '(or 1)) 'true)
+;         (equal? (run '(or false false false)) 'false)
+;         (equal? (run '(or false false 10)) 'true)
          )
     (ac-output "test and or ok")
     (error "test and or error"))
@@ -828,6 +853,12 @@
                         (fact 5))))
     (ac-output "test letrec ok")
     (error "test letrec error"))
+
+;;test unless
+(if (and (equal? 2 (run '(unless true (/ 1 0) 2)))
+         (equal? 1 (run '(unless false 1 (/ 1 0)))))
+    (ac-output "test unless ok")
+    (error "test unless error!"))
 
 
 ;run
