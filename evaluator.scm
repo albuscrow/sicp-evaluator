@@ -18,7 +18,7 @@
   (map (lambda (p) (display p)) param)
   'ok)
 
-(define (ac-apply procedure arguments)
+(define (ac-apply-before4.1.7 procedure arguments)
   (cond ((primitive-procedure? procedure)
          (apply-primitive-procedure procedure arguments))
         ((compound-procedure? procedure)
@@ -31,9 +31,67 @@
         (else
          (error "Unknown procedure type: APPLY" procedure))))
 
-(define (eval-analize-first exp env)
-  ((analyze exp) env))
+(define (ac-apply-lazy procedure arguments env)
+  (cond ((primitive-procedure? procedure)
+         (apply-primitive-procedure
+          procedure
+          (list-of-arg-values arguments)))
+        ((compound-procedure? procedure)
+         (eval-sequence
+          (procedure-body procedure)
+          (extend-environment
+           (procedure-parameters procedure)
+           (list-of-delayed-args arguments env)
+           (procedure-environment procedure))))
+        (else (error "Unknow procedure type: APPLY" procedure))))
 
+(define (list-of-arg-values exps env)
+  (if (no-operands? exps)
+      '()
+      (cons (actual-value (first-operand exps)
+                          env)
+            (list-of-arg-values (rest-operands exps)
+                                env))))
+
+(define (list-of-delayed-args exps env)
+  (if (no-operands? exps)
+      '()
+      (cons (delay-it (first-operand exps)
+                      env)
+            (list-of-delayed-args (rest-operands exps)
+                                  env))))
+
+
+(define (delay-it exp env)
+  (mlist 'thunk exp env))
+(define (thunk? obj)
+  (eq? (mcar obj) 'thunk))
+(define (thunk-exp exp)
+  (mcar (mcdr exp)))
+(define (thunk-env exp)
+  (mcar (mcdr (mcdr exp))))
+(define (evaluate-thunk thunk)
+  (let ((result (actual-value (thunk-exp thunk)
+                              (thunk-env thunk))))
+    (set-mcar! thunk 'evaluated-thunk)
+    (set-mcar!(mcdr thunk) 'result)
+    (set-mcar! (mcdr (mcdr thunk)) '())
+    result))
+
+(define (evaluated-thunk? obj)
+  (eq? 'evaluated-thunk (mcar obj)))
+
+(define (thunk-value evaluated-thunk)
+  (mcar (mcdr evaluated-thunk)))
+
+(define (force-it obj)
+  (cond ((thunk? obj)
+         (evaluate-thunk obj))
+        ((evaluated-thunk? obj)
+         (thunk-value obj))
+        (else obj)))
+
+        
 (define (analyze exp)
   (cond ((self-evaluating? exp) (analyze-self-evaluating exp))
         ((quoted? exp) (analyze-quoted exp))
@@ -76,7 +134,7 @@
           ((for? exp) (eval-before4.1.7 (for->exp exp) env))
           ((begin? exp) (eval-sequence (begin-actions exp) env))
           ((cond? exp) (eval-before4.1.7 (cond->if exp) env))
-          ((application? exp) (ac-apply (eval-before4.1.7 (operator exp) env)
+          ((application? exp) (ac-apply-before4.1.7 (eval-before4.1.7 (operator exp) env)
                                         (list-of-values (operands exp) env)))
           (else
            (error "Unknown expression type: EVAL" exp))))
@@ -90,7 +148,7 @@
           ((assignment? exp) (eval-assignment exp env))
           ((make-unbound!? exp) (eval-unbound exp env))
           ((definition? exp) (eval-definition exp env))
-          ((if? exp) (eval-if exp env))
+          ((if? exp) (eval-if-lazy exp env))
           ((unless? exp) ((analyze (unless->if exp)) env))
           ((and? exp) (eval-and exp env))
           ((or? exp) (eval-or exp env))
@@ -103,7 +161,7 @@
           ((for? exp)  (eval-lazy (for->exp exp) env))
           ((begin? exp) (eval-sequence (begin-actions exp) env))
           ((cond? exp) (eval-lazy (cond->if exp) env))
-          ((application? exp) (ac-apply (actual-value (operator exp) env)
+          ((application? exp) (ac-apply-lazy (actual-value (operator exp) env)
                                         (operands exp)
                                         env))
           (else
@@ -111,7 +169,7 @@
   res)
 
 (define (actual-value exp env)
-  (force-it (eval exp env)))
+  (force-it (eval-lazy exp env)))
 
 
 (define ac-eval eval-lazy)
@@ -284,6 +342,10 @@
   (if (true? (ac-eval (if-predicate exp) env))
       (ac-eval (if-consequent exp) env)
       (ac-eval (if-alternative exp) env)))
+(define (eval-if-lazy exp env)
+  (if (true? (actual-value (if-predicate exp) env))
+      (eval-lazy (if-consequent exp) env)
+      (eval-lazy (if-alternative exp) env)))
 
 (define (unless? exp)
   (tagged-list? exp 'unless))
@@ -717,8 +779,21 @@
                      '<procedure-env>))
       (display object)))
 
+(define input-prompt-lazy
+  ";;; L-Eval input:")
+(define output-prompt-lazy ";;; L-Eval value:")
+(define (driver-loop-lazy)
+  (prompt-for-input input-prompt)
+  (let ((input (read)))
+    (let ((output
+           (actual-value
+            input the-global-environment)))
+      (announce-output output-prompt)
+      (user-print output)))
+  (driver-loop))
+
 (define (run exp)
-  (ac-eval exp the-global-environment))
+  (actual-value exp the-global-environment))
 
 ;test
 ;;test define fun, call fun, if, quate list 
