@@ -103,11 +103,15 @@
           ((for? exp)  (eval-lazy (for->exp exp) env))
           ((begin? exp) (eval-sequence (begin-actions exp) env))
           ((cond? exp) (eval-lazy (cond->if exp) env))
-          ((application? exp) (ac-apply (eval-lazy (operator exp) env)
-                                        (list-of-values (operands exp) env)))
+          ((application? exp) (ac-apply (actual-value (operator exp) env)
+                                        (operands exp)
+                                        env))
           (else
            (error "Unknown expression type: EVAL" exp))))
   res)
+
+(define (actual-value exp env)
+  (force-it (eval exp env)))
 
 
 (define ac-eval eval-lazy)
@@ -357,31 +361,6 @@
   (let ((vars (lambda-parameters exp))
         (bproc (analyze-sequence (scan-out-defines (lambda-body exp)))))
     (lambda (env) (make-procedure vars bproc env))))
-
-;; exercise 4.3
-;(require "data-direct.scm")
-;(put 'eval 'quoted (lambda (exp env)
-;                     (text-of-quotation exp)))
-;(put 'eval 'set! eval-assignment)
-;(put 'eval 'define eval-definition)
-;(put 'eval 'if eval-if)
-;(put 'eval 'lambda (lambda (exp env)
-;                     (make-procedure (lambda-parameters exp)
-;                                     (lambda-body exp)
-;                                     env)))
-;(put 'eval 'begin (lambda (exp env)
-;                    (eval-sequence (begin-actions exp) env)))
-;(put 'eval 'cond (lambda (exp env)
-;                   (eval-4.3 (cond->if exp) env)))
-;(define (eval-4.3 exp env)
-;  (cond ((self-evaluating? exp) exp)
-;        ((variable? exp) (lookup-variable-value exp env))
-;        ((get 'eval (car exp)) ((get 'eval (car exp)) exp env))
-;        ((application? exp)
-;         (ac-apply (eval (operator exp) env)
-;                (list-of-values (operands exp) env)))
-;        (else
-;         (error "Unknown expression type: EVAL" exp))))
 
 
 ;define let, let* and named-let
