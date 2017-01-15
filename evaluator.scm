@@ -25,7 +25,7 @@
          (eval-sequence
           (procedure-body procedure)
           (extend-environment
-           (procedure-pa nmbrameters procedure)
+           (procedure-parameters procedure)
            arguments
            (procedure-environment procedure))))
         (else
@@ -41,7 +41,8 @@
           (procedure-body procedure)
           (extend-environment
            (procedure-parameters procedure)
-           (list-of-delayed-args arguments env)
+           (list-of-delayed-args
+            (procedure-parameters-usage procedure) arguments env)
            (procedure-environment procedure))))
         (else (error "Unknow procedure type: APPLY" procedure))))
 
@@ -53,17 +54,20 @@
             (list-of-arg-values (rest-operands exps)
                                 env))))
 
-(define (list-of-delayed-args exps env)
+(define (list-of-delayed-args usages exps env)
   (if (no-operands? exps)
       '()
-      (cons (delay-it (first-operand exps)
-                      env)
-            (list-of-delayed-args (rest-operands exps)
-                                  env))))
+      (let ((usage (car usages))
+            (arg (first-operand exps)))
+        (cons (if (eq? usage 'normal)
+                  (actual-value arg env)
+                  (delay-it (first-operand exps) env usage))
+              (list-of-delayed-args (cdr usages) (rest-operands exps)
+                                    env)))))
 
 
-(define (delay-it exp env)
-  (mlist 'thunk exp env))
+(define (delay-it exp env usage)
+  (mlist 'thunk exp env usage))
 
 (define (thunk? obj)
   (if (mpair? obj)
@@ -77,9 +81,12 @@
 (define (evaluate-thunk thunk)
   (let ((result (actual-value (thunk-exp thunk)
                               (thunk-env thunk))))
-    (set-mcar! thunk 'evaluated-thunk)
-    (set-mcar!(mcdr thunk) result)
-    (set-mcar! (mcdr (mcdr thunk)) '())
+    (if (eq? (mcar (mcdr (mcdr (mcdr thunk)))) 'lazy-memo)
+        (begin 
+          (set-mcar! thunk 'evaluated-thunk)
+          (set-mcar!(mcdr thunk) result)
+          (set-mcar! (mcdr (mcdr thunk)) '()))
+        'not-memo)
     result))
 
 (define (evaluated-thunk? obj)
@@ -939,7 +946,7 @@
 (run 'count)
 
 ;;e4.29
-(run '(define (square x) (* x x)))
+(run '(define (square (x lazy)) (* x x)))
 (run '(square (id 10)))
 (run 'count)
 
@@ -949,7 +956,7 @@
         (set! x (cons x '(2)))
         x))
 (run '(define (p2 x)
-        (define (p e)
+        (define (p (e lazy))
           e
           x)
         (p (set! x (cons x '(2))))))
