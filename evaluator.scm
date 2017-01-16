@@ -182,9 +182,6 @@
                                         env))
           (else
            (error "Unknown expression type: EVAL" exp))))
-  (ac-output "eval-lazy input and output\n")
-  (ac-output exp "\n")
-  (ac-output res "\n")
   res)
 
 (define (actual-value exp env)
@@ -294,13 +291,12 @@
 (define (quoted? exp)
   (tagged-list? exp 'quote))
 (define (text-of-quotation exp env)
-  (display "text-of-quotation" exp)
   (let ((text (cadr exp)))
     (define (helper text)
             (if (null? text)
                 '(list)
                 (list 'cons  (list 'quote (car text)) (helper (cdr text)))))
-    (if (symbol? text)
+    (if (or (self-evaluating? text)(symbol? text))
         text
         (ac-eval (helper text) env))))
 (define (analyze-quoted exp)
@@ -588,8 +584,6 @@
            defines)
           new-body))))))
 (define (make-procedure parameters body env)
-  (ac-output "make-procedure:\n"
-             parameters body)
   (list 'procedure parameters body env))
 (define (compound-procedure? p)
   (tagged-list? p 'procedure))
@@ -855,179 +849,178 @@
 
 ;test
 ;;test define fun, call fun, if, quote list
- (run ''(1))
-(run '(car '(1)))
-;(if (equal? (run '(car (cdr (cdr (append '(1) '(2 3)))))) 3)
-;    (ac-output "test define fun, if, quote ok\n")
-;    (error "test test define fun, if, quote error\n"))
-;
-;
-;;;test quote
-;(if (eq? (run ''a) 'a)
-;    (ac-output "test quote ok\n")
-;    (error "test quote error\n"))
-;
-;;;test define variable and begin
-;(if (equal? (run '(begin (define x 1) x)) 1)
-;    (ac-output "test define and begin ok\n")
-;    (error "test define and begin error\n"))
-;
-;;;test cond and let
-;(if (and (equal? (run '(let ((a 1))
-;                         (cond ((= a 0) 'a)
-;                               ((= 1 a) (+ a 1))
-;                               (else 'else)))) 2)
-;         (equal? (run '(let ((a 10))
-;                         (cond ((= a 0) 'a)
-;                               ((= 1 a) (+ a 1))
-;                               (else a)))) 10)
-;         (equal? (run '(let ((a 10))
-;                         (cond ((= a 0) 'a)
-;                               ((+ 10 1) => (lambda (a) (* a 2)))
-;                               (else a)))) 22))
-;    (ac-output "test let and cond ok\n")
-;    (error "test let and cond error\n"))
-;
-;;test and or
-;(if (and (equal? 'true (run '(and 3 2 1)))
-;;         (equal? (run '(and 3 false 1)) 'false)
-;;         (equal? (run '(and true)) 'true)
-;;         (equal? (run '(and false)) 'false)
-;;         (equal? (run '(or 1 false false)) 'true)
-;;         (equal? (run '(or false)) 'false)
-;;         (equal? (run '(or 1)) 'true)
-;;         (equal? (run '(or false false false)) 'false)
-;;         (equal? (run '(or false false 10)) 'true)
-;         )
-;    (ac-output "test and or ok")
-;    (error "test and or error"))
-;
-;;;test let*
-;(if (equal? 3 (run '(let* ((a 1) (b (+ a 2))) b)))
-;    (ac-output "test let* ok")
-;    (error "test let* error"))
-;
-;;;test named let*
-;(if (equal? 55 (run '(let add ((a 10))
-;                       (if (= a 0)
-;                           0
-;                           (+ a (add (- a 1)))))))
-;    (ac-output "test named let ok")
-;    (error "test named let error"))
-;
-;;;test set!
-;(if (equal? 4 (run '(begin (define a 10) (set! a 4) a)))
-;    (ac-output "test set! ok")
-;    (error "test set!" error))
-;
-;;;test for
-;(if (equal? 'ok (run '(for ((a (list 1 2 3 10)) (b (list 1 2 3 10)))
-;                       (display (+ a b))
-;                       (+ a b))))
-;    (ac-output "test for ok")
-;    (error "test for error"))
 
-;;test map e4.14
-;(run '(define (map fun list)
-;        (if (null? list)
-;            '()
-;            (cons (fun (car list)) (map fun (cdr list))))))
-;(run '(map (lambda (x) (+ x x)) '(1 2 3)))
-;
-;(run '(define (factorial n)
-;        (if (= n 1) 1  (* n (factorial (- n 1))))))
-;(run '(factorial 6))
-;
-;
-;;;test unbound
-;;(run '(begin (define a 10) (make-unbound! a) a))
-;
-;(run '(define (test input)
-;        (if (even? input)
-;            (+ a b)
-;            (* a b))
-;        (define (even? n) (if (= n 0) true (odd? (- n 1))))
-;        (define (odd? n) (if (= n 0) false (even? (- n 1))))
-;        (define a 10)
-;        (define b 20)))
-;
-;(if (and (equal? 200 (run '(test 21))) (equal? 30 (run '(test 20))))
-;    (ac-output "test internal define ok")
-;    (error "test internal define error"))
-;    
-;;;test letrec
-;(if (equal? 120 (run '(letrec
-;                          ((fact (lambda (n)
-;                                   (if (= n 1) 1 (* n (fact (- n 1)))))))
-;                        (fact 5))))
-;    (ac-output "test letrec ok")
-;    (error "test letrec error"))
-;
-;;;test unless
-;(if (and (equal? 2 (run '(unless true (/ 1 0) 2)))
-;         (equal? 1 (run '(unless false 1 (/ 1 0)))))
-;    (ac-output "test unless ok")
-;    (error "test unless error!"))
-;
-;;;e4.27 test lazy
-;(run '(define count 0))
-;(run '(define (id x) (set! count (+ count 1)) x))
-;(run '(define w (id (id 10))))
-;(run 'count)
-;(run 'w)
-;(run 'count)
-;
-;;;e4.29
-;(run '(define (square (x lazy)) (* x x)))
-;(run '(square (id 10)))
-;(run 'count)
-;
-;;;e4.30
-;
-;(run '(define (p1 x)
-;        (set! x (cons x '(2)))
-;        x))
-;(run '(define (p2 x)
-;        (define (p (e lazy))
-;          e
-;          x)
-;        (p (set! x (cons x '(2))))))
-;(run '(p1 1))
-;(run '(p2 1))
-;
-;
-;;begin stream
-;
-;(run-sequence '((define (list-ref items n)
-;                  (if (= n 0)
-;                      (car items)
-;                      (list-ref (cdr items) (- n 1))))
-;                (define (map proc items)
-;                  (if (null? items)
-;                      '()
-;                      (cons (proc (car items)) (map proc (cdr items)))))
-;                (define (scale-list items factor)
-;                  (map (lambda (x) (* x factor)) items))
-;                (define (add-lists list1 list2)
-;                  (cond ((null? list1) list2)
-;                        ((null? list2) list1)
-;                        (else (cons (+ (car list1) (car list2))
-;                                    (add-lists (cdr list1) (cdr list2))))))
-;                (define ones (cons 1 ones))
-;                (define integers (cons 1 (add-lists ones integers)))
-;                (list-ref integers 17)
-;                (define (integral integrand initial-value dt)
-;                  (define int
-;                    (cons initial-value
-;                          (add-lists (scale-list integrand dt) int)))
-;                  int)
-;                (define (solve f y0 dt)
-;                  (define
-;                    y (integral dy y0 dt))
-;                  (define dy (map f y))
-;                  y)
-;                (list-ref (solve (lambda (x) x) 1 0.001) 1000)
-;                (car '(a b c))
-;                ))
+(if (equal? (run '(car (cdr (cdr (append '(1) '(2 3)))))) 3)
+    (ac-output "test define fun, if, quote ok\n")
+    (error "test test define fun, if, quote error\n"))
+
+
+;;test quote
+(if (eq? (run ''a) 'a)
+    (ac-output "test quote ok\n")
+    (error "test quote error\n"))
+
+;;test define variable and begin
+(if (equal? (run '(begin (define x 1) x)) 1)
+    (ac-output "test define and begin ok\n")
+    (error "test define and begin error\n"))
+
+;;test cond and let
+(if (and (equal? (run '(let ((a 1))
+                         (cond ((= a 0) 'a)
+                               ((= 1 a) (+ a 1))
+                               (else 'else)))) 2)
+         (equal? (run '(let ((a 10))
+                         (cond ((= a 0) 'a)
+                               ((= 1 a) (+ a 1))
+                               (else a)))) 10)
+         (equal? (run '(let ((a 10))
+                         (cond ((= a 0) 'a)
+                               ((+ 10 1) => (lambda (a) (* a 2)))
+                               (else a)))) 22))
+    (ac-output "test let and cond ok\n")
+    (error "test let and cond error\n"))
+
+;test and or
+(if (and (equal? 'true (run '(and 3 2 1)))
+;         (equal? (run '(and 3 false 1)) 'false)
+;         (equal? (run '(and true)) 'true)
+;         (equal? (run '(and false)) 'false)
+;         (equal? (run '(or 1 false false)) 'true)
+;         (equal? (run '(or false)) 'false)
+;         (equal? (run '(or 1)) 'true)
+;         (equal? (run '(or false false false)) 'false)
+;         (equal? (run '(or false false 10)) 'true)
+         )
+    (ac-output "test and or ok")
+    (error "test and or error"))
+
+;;test let*
+(if (equal? 3 (run '(let* ((a 1) (b (+ a 2))) b)))
+    (ac-output "test let* ok")
+    (error "test let* error"))
+
+;;test named let*
+(if (equal? 55 (run '(let add ((a 10))
+                       (if (= a 0)
+                           0
+                           (+ a (add (- a 1)))))))
+    (ac-output "test named let ok")
+    (error "test named let error"))
+
+;;test set!
+(if (equal? 4 (run '(begin (define a 10) (set! a 4) a)))
+    (ac-output "test set! ok")
+    (error "test set!" error))
+
+;;test for
+(if (equal? 'ok (run '(for ((a (list 1 2 3 10)) (b (list 1 2 3 10)))
+                       (display (+ a b))
+                       (+ a b))))
+    (ac-output "test for ok")
+    (error "test for error"))
+
+;test map e4.14
+(run '(define (map fun list)
+        (if (null? list)
+            '()
+            (cons (fun (car list)) (map fun (cdr list))))))
+(run '(map (lambda (x) (+ x x)) '(1 2 3)))
+
+(run '(define (factorial n)
+        (if (= n 1) 1  (* n (factorial (- n 1))))))
+(run '(factorial 6))
+
+
+;;test unbound
+;(run '(begin (define a 10) (make-unbound! a) a))
+
+(run '(define (test input)
+        (if (even? input)
+            (+ a b)
+            (* a b))
+        (define (even? n) (if (= n 0) true (odd? (- n 1))))
+        (define (odd? n) (if (= n 0) false (even? (- n 1))))
+        (define a 10)
+        (define b 20)))
+
+(if (and (equal? 200 (run '(test 21))) (equal? 30 (run '(test 20))))
+    (ac-output "test internal define ok")
+    (error "test internal define error"))
+    
+;;test letrec
+(if (equal? 120 (run '(letrec
+                          ((fact (lambda (n)
+                                   (if (= n 1) 1 (* n (fact (- n 1)))))))
+                        (fact 5))))
+    (ac-output "test letrec ok")
+    (error "test letrec error"))
+
+;;test unless
+(if (and (equal? 2 (run '(unless true (/ 1 0) 2)))
+         (equal? 1 (run '(unless false 1 (/ 1 0)))))
+    (ac-output "test unless ok")
+    (error "test unless error!"))
+
+;;e4.27 test lazy
+(run '(define count 0))
+(run '(define (id x) (set! count (+ count 1)) x))
+(run '(define w (id (id 10))))
+(run 'count)
+(run 'w)
+(run 'count)
+
+;;e4.29
+(run '(define (square (x lazy)) (* x x)))
+(run '(square (id 10)))
+(run 'count)
+
+;;e4.30
+
+(run '(define (p1 x)
+        (set! x (cons x '(2)))
+        x))
+(run '(define (p2 x)
+        (define (p (e lazy))
+          e
+          x)
+        (p (set! x (cons x '(2))))))
+(run '(p1 1))
+(run '(p2 1))
+
+
+;begin stream
+
+(run-sequence '((define (list-ref items n)
+                  (if (= n 0)
+                      (car items)
+                      (list-ref (cdr items) (- n 1))))
+                (define (map proc items)
+                  (if (null? items)
+                      '()
+                      (cons (proc (car items)) (map proc (cdr items)))))
+                (define (scale-list items factor)
+                  (map (lambda (x) (* x factor)) items))
+                (define (add-lists list1 list2)
+                  (cond ((null? list1) list2)
+                        ((null? list2) list1)
+                        (else (cons (+ (car list1) (car list2))
+                                    (add-lists (cdr list1) (cdr list2))))))
+                (define ones (cons 1 ones))
+                (define integers (cons 1 (add-lists ones integers)))
+                (list-ref integers 17)
+                (define (integral integrand initial-value dt)
+                  (define int
+                    (cons initial-value
+                          (add-lists (scale-list integrand dt) int)))
+                  int)
+                (define (solve f y0 dt)
+                  (define
+                    y (integral dy y0 dt))
+                  (define dy (map f y))
+                  y)
+                (list-ref (solve (lambda (x) x) 1 0.001) 1000)
+                (car (cdr '(a b c)))
+                ))
 ;run
 ;(driver-loop)
