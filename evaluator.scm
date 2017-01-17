@@ -5,22 +5,9 @@
   (if (null? lst)
       '()
       (mcons (car lst) (list->mlist (cdr lst)))))
-;(define cons mcons)
-;(define car mcar)
-;(define cdr mcdr)
-;(define list mlist)
-;(define set-car! set-mcar!)
-;(define set-cdr! set-mcdr!)
 
 ;eval and apply
-
-(define (ac-output . param)
-  (map (lambda (p)
-         (if (tagged-list? p 'procedure)
-             (ac-output "(procedure " (cadr p) (caddr p) " )\n")
-             (display p))) param)
-  'ok)
-
+;;normal
 (define (ac-apply-before4.1.7 procedure arguments)
   (cond ((primitive-procedure? procedure)
          (apply-primitive-procedure procedure arguments))
@@ -34,6 +21,59 @@
         (else
          (error "Unknown procedure type: APPLY" procedure))))
 
+(define (eval-before4.1.7 exp env)
+  (define res
+    (cond ((self-evaluating? exp) exp)
+          ((variable? exp) (lookup-variable-value exp env))
+          ((quoted? exp) (text-of-quotation exp env))
+          ((assignment? exp) (eval-assignment exp env))
+          ((make-unbound!? exp) (eval-unbound exp env))
+          ((definition? exp) (eval-definition exp env))
+          ((if? exp) (eval-if exp env))
+          ((unless? exp) ((analyze (unless->if exp)) env))
+          ((and? exp) (eval-and exp env))
+          ((or? exp) (eval-or exp env))
+          ((lambda? exp) (make-procedure (lambda-parameters exp)
+                                                                (lambda-body exp)
+                                                                env))
+          ((let? exp) (eval-before4.1.7 (let->combination exp) env))
+          ((let*? exp) (eval-before4.1.7 (let*->nested-lets exp) env))
+          ((letrec? exp) (eval-before4.1.7 (letrec->nested-lets exp) env))
+          ((for? exp) (eval-before4.1.7 (for->exp exp) env))
+          ((begin? exp) (eval-sequence (begin-actions exp) env))
+          ((cond? exp) (eval-before4.1.7 (cond->if exp) env))
+          ((application? exp) (ac-apply-before4.1.7 (eval-before4.1.7 (operator exp) env)
+                                        (list-of-values (operands exp) env)))
+          (else
+           (error "Unknown expression type: EVAL" exp))))
+  (ac-output "eval-before4.1.7:\n" exp "\n" res "\n")
+  res)
+
+;;analyze
+(define (analyze exp)
+  (cond ((self-evaluating? exp) (analyze-self-evaluating exp))
+        ((quoted? exp) (analyze-quoted exp))
+        ((variable? exp) (analyze-variable exp))
+        ((assignment? exp) (analyze-assignment exp))
+        ((definition? exp) (analyze-definition exp))
+        ((if? exp) (analyze-if exp))
+        ((unless? exp) (analyze (unless->if exp)))
+        ((lambda? exp) (analyze-lambda exp))
+        ((begin? exp) (analyze-sequence (begin-actions exp)))
+        ((cond? exp) (analyze (cond->if exp)))
+        ((let? exp) (analyze (let->combination exp)))
+        ((let*? exp) (analyze (let*->nested-lets exp)))
+        ((letrec? exp) (analyze (letrec->nested-lets exp)))
+        ((for? exp) (analyze (for->exp exp)))
+        ((and? exp) (analyze-and exp))
+        ((or? exp) (analyze-or exp))
+        ((application? exp) (analyze-application exp))
+        (else (error "Unknow expression type: ANALYZE" exp))))
+
+(define (eval-analyze exp env)
+  ((analyze exp) env))
+  
+;;lazy
 (define (ac-apply-lazy procedure arguments env)
   (cond ((primitive-procedure? procedure)
          (apply-primitive-procedure
@@ -68,15 +108,14 @@
               (list-of-delayed-args (cdr usages) (rest-operands exps)
                                     env)))))
 
-
 (define (delay-it exp env usage)
   (mlist 'thunk exp env usage))
 
+;;define thunk
 (define (thunk? obj)
   (if (mpair? obj)
       (eq? (mcar obj) 'thunk)
       #f))
-
 (define (thunk-exp exp)
   (mcar (mcdr exp)))
 (define (thunk-env exp)
@@ -87,74 +126,23 @@
     (if (eq? (mcar (mcdr (mcdr (mcdr thunk)))) 'lazy-memo)
         (begin 
           (set-mcar! thunk 'evaluated-thunk)
-          (set-mcar!(mcdr thunk) result)
-          (set-mcar! (mcdr (mcdr thunk)) '()))
+          (set-mcar! (mcdr thunk) result)
+          (set-mcar! (mcdr (mcdr thunk)) '())
+          )
         'not-memo)
     result))
-
 (define (evaluated-thunk? obj)
   (if (mpair? obj)
       (eq? 'evaluated-thunk (mcar obj))
       #f))
-
 (define (thunk-value evaluated-thunk)
   (mcar (mcdr evaluated-thunk)))
-
 (define (force-it obj)
   (cond ((thunk? obj)
          (evaluate-thunk obj))
         ((evaluated-thunk? obj)
          (thunk-value obj))
         (else obj)))
-
-        
-(define (analyze exp)
-  (cond ((self-evaluating? exp) (analyze-self-evaluating exp))
-        ((quoted? exp) (analyze-quoted exp))
-        ((variable? exp) (analyze-variable exp))
-        ((assignment? exp) (analyze-assignment exp))
-        ((definition? exp) (analyze-definition exp))
-        ((if? exp) (analyze-if exp))
-        ((unless? exp) (analyze (unless->if exp)))
-        ((lambda? exp) (analyze-lambda exp))
-        ((begin? exp) (analyze-sequence (begin-actions exp)))
-        ((cond? exp) (analyze (cond->if exp)))
-        ((let? exp) (analyze (let->combination exp)))
-        ((let*? exp) (analyze (let*->nested-lets exp)))
-        ((letrec? exp) (analyze (letrec->nested-lets exp)))
-        ((for? exp) (analyze (for->exp exp)))
-        ((and? exp) (analyze-and exp))
-        ((or? exp) (analyze-or exp))
-        ((application? exp) (analyze-application exp))
-        (else (error "Unknow expression type: ANALYZE" exp))))
-
-
-(define (eval-before4.1.7 exp env)
-  (define res
-    (cond ((self-evaluating? exp) exp)
-          ((variable? exp) (lookup-variable-value exp env))
-          ((quoted? exp) (text-of-quotation exp env))
-          ((assignment? exp) (eval-assignment exp env))
-          ((make-unbound!? exp) (eval-unbound exp env))
-          ((definition? exp) (eval-definition exp env))
-          ((if? exp) (eval-if exp env))
-          ((unless? exp) ((analyze (unless->if exp)) env))
-          ((and? exp) (eval-and exp env))
-          ((or? exp) (eval-or exp env))
-          ((lambda? exp) (make-procedure (lambda-parameters exp)
-                                                                (lambda-body exp)
-                                                                env))
-          ((let? exp) (eval-before4.1.7 (let->combination exp) env))
-          ((let*? exp) (eval-before4.1.7 (let*->nested-lets exp) env))
-          ((letrec? exp) (eval-before4.1.7 (letrec->nested-lets exp) env))
-          ((for? exp) (eval-before4.1.7 (for->exp exp) env))
-          ((begin? exp) (eval-sequence (begin-actions exp) env))
-          ((cond? exp) (eval-before4.1.7 (cond->if exp) env))
-          ((application? exp) (ac-apply-before4.1.7 (eval-before4.1.7 (operator exp) env)
-                                        (list-of-values (operands exp) env)))
-          (else
-           (error "Unknown expression type: EVAL" exp))))
-  res)
 
 (define (eval-lazy exp env)
   (define res
@@ -173,7 +161,7 @@
                                                                 env))
           ((let? exp) (eval-lazy (let->combination exp) env))
           ((let*? exp) (eval-lazy (let*->nested-lets exp) env))
-          ((letrec? exp) (eval-before4.1.7 (letrec->nested-lets exp) env))
+          ((letrec? exp) (eval-lazy (letrec->nested-lets exp) env))
           ((for? exp)  (eval-lazy (for->exp exp) env))
           ((begin? exp) (eval-sequence (begin-actions exp) env))
           ((cond? exp) (eval-lazy (cond->if exp) env))
@@ -182,13 +170,30 @@
                                         env))
           (else
            (error "Unknown expression type: EVAL" exp))))
+  ;(ac-output "eval-lazy:\n" exp "\n" res "\n") 
   res)
 
 (define (actual-value exp env)
   (force-it (eval-lazy exp env)))
 
 
+
+
+
+;;;
 (define ac-eval eval-lazy)
+
+;some util
+(define (tagged-list? exp tag)
+  (if (pair? exp)
+      (eq? (car exp) tag)
+      #false))
+(define (ac-output . param)
+  (map (lambda (p)
+         (if (tagged-list? p 'procedure)
+             (ac-output "(procedure " (cadr p) (caddr p) " )\n")
+             (display p))) param)
+  'ok)
   
 ;eval sequence
 (define (eval-sequence exps env)
@@ -211,13 +216,6 @@
   (let ((procs (map analyze exps)))
     (if (null? procs) (error "Empty sequence: ANALYZE")
         (loop (car procs) (cdr procs)))))
-
-
-;some util
-(define (tagged-list? exp tag)
-  (if (pair? exp)
-      (eq? (car exp) tag)
-      #false))
 
 ;define begin
 (define (begin? exp) (tagged-list? exp 'begin))
@@ -299,8 +297,11 @@
     (if (or (self-evaluating? text)(symbol? text))
         text
         (ac-eval (helper text) env))))
+(define (text-of-quotation-normal exp)
+  (cadr exp))
+
 (define (analyze-quoted exp)
-  (let ((qval (text-of-quotation exp)))
+  (let ((qval (text-of-quotation-normal exp)))
     (lambda (env) qval)))
 
 ;; exercise 4.4 define "and" and "or"
@@ -308,24 +309,29 @@
 (define (eval-and exps env)
   (define (eval-and-recusion remain-exps result)
     (if (or (null? remain-exps) (not result))
-        'true
+        result
         (eval-and-recusion
          (rest-exps remain-exps)
          (ac-eval (first-exp remain-exps) env))))
-  (eval-and-recusion (cdr exps) #t))
+  (eval-and-recusion (cdr exps) true))
 
 (define (analyze-and exp)
-  (define (sequentially proc1 proc2)
-    (lambda (env)
-      (if (proc1 env)
-          (proc2 env)
-          'false)))
-  (let ((procs (map analyze (cdr exp))))
-    (define (loop procs)
-      (if (null? procs)
-          (lambda (env) 'true)
-          (sequentially (car procs) (loop (cdr procs))))) 
-    (loop procs)))
+  (if (null? (cdr exp))
+      (lambda (env) #t)
+      (let ((procs (map analyze (cdr exp))))
+        (define (sequentially proc1 proc2)
+          (lambda (env)
+            (let ((res (proc1 env)))
+              (if res
+                  (proc2 env)
+                  res))))
+        (define (loop procs)
+          (let ((first-proc (car procs))
+                (rest-procs (cdr procs)))
+            (if (null? rest-procs)
+                (lambda (env) (first-proc env))
+                (sequentially first-proc (loop rest-procs)))))
+        (loop procs))))
         
         
 
@@ -333,22 +339,27 @@
 (define (eval-or exp env)
   (define (eval-or-recusion remain-exps result)
     (if (or (null? remain-exps) result)
-        'false
+        result
         (eval-or-recusion (rest-exps remain-exps) (ac-eval (first-exp remain-exps) env))))
-  (eval-or-recusion (cdr exp) #f))
+  (eval-or-recusion (cdr exp) false))
 
 (define (analyze-or exp)
-  (define (sequentially proc1 proc2)
-    (lambda (env)
-      (if (proc1 env)
-          'true
-          (proc2 env))))
-  (let ((procs (map analyze (cdr exp))))
-    (define (loop procs)
-      (if (null? procs)
-          (lambda (env) 'false)
-          (sequentially (car procs) (loop (cdr procs)))))
-    (loop procs)))
+  (if (null? (cdr exp))
+      (lambda (env) #f)
+      (let ((procs (map analyze (cdr exp))))
+        (define (sequentially proc1 proc2)
+          (lambda (env)
+            (let ((res (proc1 env)))
+              (if res
+                  res
+                  (proc2 env)))))
+        (define (loop procs)
+          (let ((first-proc (car procs))
+                (rest-procs (cdr procs)))
+            (if (null? rest-procs)
+                (lambda (env) (first-proc env))
+                (sequentially first-proc (loop rest-procs)))))
+        (loop procs))))
 
 ;define if
 
@@ -362,10 +373,15 @@
         (car alternative-clause))))
 (define (make-if predicate consequent alternative)
   (list 'if predicate consequent alternative))
+
 (define (eval-if exp env)
+  (ac-output "eval-if\n" exp "\n") 
   (if (true? (ac-eval (if-predicate exp) env))
-      (ac-eval (if-consequent exp) env)
+      (begin
+        (ac-output (if-consequent exp) "\n")
+        (ac-eval (if-consequent exp) env))
       (ac-eval (if-alternative exp) env)))
+
 (define (eval-if-lazy exp env)
   (if (true? (actual-value (if-predicate exp) env))
       (eval-lazy (if-consequent exp) env)
@@ -827,7 +843,9 @@
   (driver-loop))
 
 (define (run exp)
-  (actual-value exp the-global-environment))
+  (if (equal? ac-eval eval-lazy)
+      (actual-value exp the-global-environment)
+      (ac-eval exp the-global-environment)))
 
 (define (run-sequence exps)
   (if (null? exps)
@@ -837,22 +855,62 @@
         (newline)
         (run-sequence (cdr exps)))))
 
-(run-sequence '((define (cons x y) (lambda (m) (m x y)))
-                (define (car z) (z (lambda (p q) p)))
-                (define (cdr z) (z (lambda (p q) q)))
-                (define (append x y)
+(define (disp-cons obj depth)
+  (letrec ((user-car (lambda (z)
+                       (force-it (lookup-variable-value 'x (procedure-environment (cdr z))))))
+           (user-cdr (lambda (z)
+                       (force-it (lookup-variable-value 'y (procedure-environment (cdr z)))))))
+    (cond
+      ((>= depth 10)
+       (display "...)"))
+      ((null? obj)
+       (display ""))
+      (else
+       (let ((cdr-value (user-cdr obj)))
+         (display "(")
+         (display (user-car obj))
+         (if (tagged-list? cdr-value 'cons)
+             (begin
+               (display " ")
+               (disp-cons cdr-value (+ depth 1)))
+             (begin
+               (display ".")
+               (display cdr-value)))
+         (display ")"))))))
+     
+                             
+
+(run '(define (display-cons cons)
+        (if (null? cons)
+            (display "\n")
+            (begin
+              (display (car cons))
+              (display " ")
+              (display-cons (cdr cons))))))
+
+(if (equal? ac-eval eval-lazy)
+    (run-sequence '((define ori-cons cons)
+                    (define ori-car car)
+                    (define ori-cdr cdr)
+                    (define (cons x y) (ori-cons 'cons (lambda (m) (m x y))))
+                    (define (car z) ((ori-cdr z) (lambda (p q) p)))
+                    (define (cdr z) ((ori-cdr z) (lambda (p q) q)))
+                    ))
+    'not-define-own-cons) 
+                
+(run '(define (append x y)
                   (if (null? x)
                       y
-                      (cons (car x) (append (cdr x) y))))
-                ))
-                
-
+                      (cons (car x) (append (cdr x) y)))))
 ;test
 ;;test define fun, call fun, if, quote list
-
-(if (equal? (run '(car (cdr (cdr (append '(1) '(2 3)))))) 3)
-    (ac-output "test define fun, if, quote ok\n")
-    (error "test test define fun, if, quote error\n"))
+(if (equal? eval-lazy ac-eval) 
+    (if (equal? (run '(car (cdr (cdr (append '(1) '(2 3)))))) 3)
+        (ac-output "test define fun, if, quote ok\n")
+        (error "test test define fun, if, quote error\n"))
+    (if (equal? (run '(car (cdr (cdr (append (list 1) (list 2 3)))))) 3)
+        (ac-output "test define fun, if, quote ok\n")
+        (error "test test define fun, if, quote error\n")))
 
 
 ;;test quote
@@ -882,15 +940,16 @@
     (error "test let and cond error\n"))
 
 ;test and or
-(if (and (equal? 'true (run '(and 3 2 1)))
-;         (equal? (run '(and 3 false 1)) 'false)
-;         (equal? (run '(and true)) 'true)
-;         (equal? (run '(and false)) 'false)
-;         (equal? (run '(or 1 false false)) 'true)
-;         (equal? (run '(or false)) 'false)
-;         (equal? (run '(or 1)) 'true)
-;         (equal? (run '(or false false false)) 'false)
-;         (equal? (run '(or false false 10)) 'true)
+(ac-output "temp temp" (run '(and 3 2 1)))
+(if (and (equal? 1 (run '(and 3 2 1)))
+         (equal? (run '(and 3 false 1)) #f)
+         (equal? (run '(and true)) #t)
+         (equal? (run '(and false)) #f)
+         (equal? (run '(or 1 false false)) 1)
+         (equal? (run '(or false)) #f)
+         (equal? (run '(or 1)) 1)
+         (equal? (run '(or false false false)) #f)
+         (equal? (run '(or false false 10)) 10)
          )
     (ac-output "test and or ok")
     (error "test and or error"))
@@ -914,18 +973,18 @@
     (error "test set!" error))
 
 ;;test for
-(if (equal? 'ok (run '(for ((a (list 1 2 3 10)) (b (list 1 2 3 10)))
+(if (equal? 'ok (run '(for ((a '(1 2 3 10)) (b '(1 2 3 10)))
                        (display (+ a b))
                        (+ a b))))
     (ac-output "test for ok")
     (error "test for error"))
 
 ;test map e4.14
-(run '(define (map fun list)
-        (if (null? list)
-            '()
-            (cons (fun (car list)) (map fun (cdr list))))))
-(run '(map (lambda (x) (+ x x)) '(1 2 3)))
+(run '(define (map fun lst)
+        (if (null? lst)
+            (list)
+            (cons (fun (car lst)) (map fun (cdr lst))))))
+(disp-cons (run '(map (lambda (x) (+ x x)) '(1 2 3))) 0)
 
 (run '(define (factorial n)
         (if (= n 1) 1  (* n (factorial (- n 1))))))
@@ -990,37 +1049,38 @@
 
 
 ;begin stream
-
-(run-sequence '((define (list-ref items n)
-                  (if (= n 0)
-                      (car items)
-                      (list-ref (cdr items) (- n 1))))
-                (define (map proc items)
-                  (if (null? items)
-                      '()
-                      (cons (proc (car items)) (map proc (cdr items)))))
-                (define (scale-list items factor)
-                  (map (lambda (x) (* x factor)) items))
-                (define (add-lists list1 list2)
-                  (cond ((null? list1) list2)
-                        ((null? list2) list1)
-                        (else (cons (+ (car list1) (car list2))
-                                    (add-lists (cdr list1) (cdr list2))))))
-                (define ones (cons 1 ones))
-                (define integers (cons 1 (add-lists ones integers)))
-                (list-ref integers 17)
-                (define (integral integrand initial-value dt)
-                  (define int
-                    (cons initial-value
-                          (add-lists (scale-list integrand dt) int)))
-                  int)
-                (define (solve f y0 dt)
-                  (define
-                    y (integral dy y0 dt))
-                  (define dy (map f y))
-                  y)
-                (list-ref (solve (lambda (x) x) 1 0.001) 1000)
-                (car (cdr '(a b c)))
-                ))
+(if (equal? ac-eval eval-lazy)
+    (run-sequence '((define (list-ref items n)
+                      (if (= n 0)
+                          (car items)
+                          (list-ref (cdr items) (- n 1))))
+                    (define (map proc items)
+                      (if (null? items)
+                          '()
+                          (cons (proc (car items)) (map proc (cdr items)))))
+                    (define (scale-list items factor)
+                      (map (lambda (x) (* x factor)) items))
+                    (define (add-lists list1 list2)
+                      (cond ((null? list1) list2)
+                            ((null? list2) list1)
+                            (else (cons (+ (car list1) (car list2))
+                                        (add-lists (cdr list1) (cdr list2))))))
+                    (define ones (cons 1 ones))
+                    (define integers (cons 1 (add-lists ones integers)))
+                    (list-ref integers 17)
+                    (define (integral integrand initial-value dt)
+                      (define int
+                        (cons initial-value
+                              (add-lists (scale-list integrand dt) int)))
+                      int)
+                    (define (solve f y0 dt)
+                      (define
+                        y (integral dy y0 dt))
+                      (define dy (map f y))
+                      y)
+                    (list-ref (solve (lambda (x) x) 1 0.001) 1000)
+                    (car (cdr '(a b c)))
+                    ))
+    'not-test-stream)
 ;run
 ;(driver-loop)
